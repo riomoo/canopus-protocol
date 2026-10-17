@@ -1,0 +1,13 @@
+# Your game and everything made from it stay on your machine.
+/games/*
+!/games/README.md
+/data/
+/build/
+*.3ds
+*.cci
+*.cia
+*.cxi
+*.exe
+ds2rb.log
+profile.txt
+frames/

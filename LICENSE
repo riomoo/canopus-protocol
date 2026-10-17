@@ -1,18 +1,28 @@
-# Prism Information License (PIL)
-Copyright (c) 2026 [Your Name or Organization and/or Email]
+Copyright (c) 2026 Riomoo/Alister [alister at kamikishi dot net]
 
 This software is licensed under the Prism Information License (PIL).
 
 - You are free to use, modify, and distribute this software.
+- You must provide the complete source code of this software and any
+  derivative works.
 - Any derivative work must include this license.
-- You must also provide a concise explanation of how to operate this software,
-  as well as backends and frontends (if any) that work with this software.
-- You must credit the original creator of this software.
-- You may choose to license this software under additional licenses, provided that the terms of the original PIL are still adhered to.
+- You must credit the original creator of this software. This credit must
+  appear in the source code of this software or any derivative works,
+  at minimum in a README file or equivalent documentation file included
+  in the source.
+- You must provide clear and complete instructions on how to build and
+  operate this software. If this software is designed to work with external
+  backends (services or software that this software communicates with or
+  depends on to function) or frontends (interfaces or software that
+  communicate with or depend on this software to function), you must also
+  document how to set up, configure, and operate those backends and
+  frontends in relation to this software.
+- You may choose to license this software under additional licenses,
+  provided that the terms of the original PIL are still adhered to.
 
 This software is provided "as is", without any warranty of any kind,
-express or implied, including but not limited to the warranties of merchantability,
-fitness for a particular purpose, and non-infringement.
+express or implied, including but not limited to the warranties of
+merchantability, fitness for a particular purpose, and non-infringement.
 
 By using this software, you agree to the terms of the PIL.
 For more information visit: https://pil.jester-designs.com/
