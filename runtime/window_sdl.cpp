@@ -4,6 +4,7 @@
 // Enter = START, Backspace = SELECT, I/J/K/L = Circle Pad; the left mouse
 // button on the bottom screen touches it.
 #include "window.h"
+#include "cheats.h"
 
 #ifndef _WIN32
 
@@ -112,6 +113,27 @@ void Run(std::string title, std::atomic<int>* ready)
                 case sdl::KEYDOWN:
                 case sdl::KEYUP: {
                     const bool down = e.type == sdl::KEYDOWN;
+                    const int sc = e.key.keysym.scancode;
+                    // F1 and, while it is open, the keys that drive the cheat menu.
+                    if (down && sc == 58) { cheat::PushKey(cheat::KEY_TOGGLE); break; }
+                    if (cheat::Open()) {
+                        int k = 0;
+                        switch (sc) {
+                        case 82: k = cheat::KEY_UP; break;
+                        case 81: k = cheat::KEY_DOWN; break;
+                        case 80: k = cheat::KEY_LEFT; break;
+                        case 79: k = cheat::KEY_RIGHT; break;
+                        case 40: case 88: k = cheat::KEY_ENTER; break;
+                        case 41: k = cheat::KEY_BACK; break;
+                        case 42: k = cheat::KEY_ERASE; break;
+                        case 75: k = cheat::KEY_PAGE_UP; break;
+                        case 78: k = cheat::KEY_PAGE_DOWN; break;
+                        }
+                        if (down && k) cheat::PushKey(k);
+                        s_buttons = 0;
+                        s_circle = 0;
+                        break;
+                    }
                     if (const u32 b = KeyButton(e.key.keysym.scancode)) {
                         if (down) s_buttons |= b;
                         else s_buttons &= ~b;
@@ -122,6 +144,11 @@ void Run(std::string title, std::atomic<int>* ready)
                     }
                     break;
                 }
+                case sdl::TEXTINPUT:  // typing searches the cheat menu's lists
+                    if (cheat::Open())
+                        for (const char* t = e.text.text; *t; ++t)
+                            if (*t >= 32 && *t < 127) cheat::PushKey(*t);
+                    break;
                 case sdl::MOUSEBUTTONDOWN:
                     if (e.button.button == 1) Touch(s, ren, e.button.x, e.button.y);
                     break;
@@ -191,6 +218,7 @@ void SetStatus(const char* text)
 input::State Input()
 {
     input::State st;
+    if (cheat::Open()) return st;  // the menu has the keys
     st.buttons = s_buttons;
     st.touch = s_touch;
     st.touchX = (u16)s_touchX.load();

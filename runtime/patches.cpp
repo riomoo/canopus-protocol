@@ -22,12 +22,9 @@ namespace rt {
 
 namespace {
 
-constexpr u32 CORO_STATE = 0x005C57F8;
-constexpr u32 CORO_START = 0x0015C1F0;
-constexpr u32 CORO_FINISH = 0x0015C1FC;
-constexpr u32 CORO_SWAP = 0x0015C214;
-constexpr u32 CORO_YIELD = 0x0015C230;
-constexpr u32 RUN_ON_STACK = 0x0016F4C0;
+// Where these are depends on the game version (1.0: start 0x15C1F0, state
+// 0x5C57F8; 1.1: 0x15C230, 0x5C58D0): found by their instructions at start-up.
+u32 CORO_STATE = 0, CORO_START = 0, CORO_FINISH = 0, CORO_SWAP = 0, CORO_YIELD = 0, RUN_ON_STACK = 0;
 
 // Context address -> the fiber suspended in it, and the context's words as
 // they were saved. The game may abandon a suspended coroutine and set up a
@@ -156,14 +153,42 @@ extern "C" void RunOnStack(RcCpu* c)
     c->r[0] = c->r[2];
     c->r[14] = cont;
     rc_call(c, fn);
-    if (!FindFunction(cont)) Fatal("0x16F4C0: the continuation %08X is not a recompiled function", cont);
+    if (!FindFunction(cont)) Fatal("run-on-stack: the continuation %08X is not a recompiled function", cont);
     rc_call(c, cont);
 }
 
 }  // namespace
 
+// The first address in the code whose words match `pattern` (0 = any word).
+u32 FindCode(const u32* pattern, int n)
+{
+    const u32 start = 0x00100000, end = 0x00400000;
+    for (u32 a = start; a + 4 * n <= end; a += 4) {
+        if (!mem::IsMapped(a, 4 * n)) break;
+        bool ok = true;
+        for (int i = 0; i < n && ok; ++i) ok = !pattern[i] || mem::R32(a + 4 * i) == pattern[i];
+        if (ok) return a;
+    }
+    return 0;
+}
+
 void InstallPatches()
 {
+    // start: ldr lr,[pc,#20]; mov r0,r5; bx r4; ldr r12,[pc,#12]; mov r0,#0; b swap
+    static const u32 coro[] = {0xE59FE014, 0xE1A00005, 0xE12FFF14, 0xE59FC00C, 0xE3A00000, 0xEA00000C};
+    // run on stack: mov sp,r0; mov r0,r2; mov lr,r3; bx r1
+    static const u32 runOnStack[] = {0xE1A0D000, 0xE1A00002, 0xE1A0E003, 0xE12FFF11};
+    CORO_START = FindCode(coro, 6);
+    RUN_ON_STACK = FindCode(runOnStack, 4);
+    if (!CORO_START || !RUN_ON_STACK) {
+        Log(LOG_ERROR, "patch", "the coroutine code was not found: unsupported game version?");
+        return;
+    }
+    CORO_FINISH = CORO_START + 0x0C;
+    CORO_STATE = mem::R32(CORO_START + 0x20);  // the literal after start/finish
+    CORO_SWAP = CORO_START + 0x24;
+    CORO_YIELD = CORO_START + 0x40;
+    Log(LOG_INFO, "patch", "coroutines at %08X (state %08X), run-on-stack at %08X", CORO_START, CORO_STATE, RUN_ON_STACK);
     struct { u32 addr; RcFunc fn; } patches[] = {
         {CORO_START, CoroStart}, {CORO_FINISH, CoroFinish}, {CORO_SWAP, CoroSwap},
         {CORO_YIELD, CoroYield}, {RUN_ON_STACK, RunOnStack},

@@ -1,6 +1,6 @@
-# Canopus Protocol
+# Devil Survivor 2 Record Breaker: PC port
 
-A native PC (Windows and Linux) port of *Shin Megami Tensei: Devil Survivor 2
+A native Windows and Linux version of *Shin Megami Tensei: Devil Survivor 2
 Record Breaker* (Nintendo 3DS), made by static recompilation. The game's ARM
 code is translated to C on your machine and built together with a runtime
 that does what the 3DS did: its kernel, system services, GPU (a software
@@ -15,8 +15,9 @@ and the generated C code) stays on your machine; don't publish `data/` or
 
 - A **decrypted** dump of the game, as `.3ds`, `.cci`, `.cia` or `.cxi`.
   Make one from your own console with GodMode9. The supported version is
-  the North American release; the setup step checks this. Updates and DLC
-  aren't supported yet.
+  the North American release; the setup step checks this.
+- Optional: the **v1.1 update** and the **DLC**, also as decrypted `.cia`
+  files dumped from your console.
 - [Go](https://go.dev/dl/) 1.21 or newer (runs the recompiler).
 - `make` and a C/C++ compiler for the platform you're building for (below).
 - About 3 GB of free disk space for the extracted game data.
@@ -31,6 +32,19 @@ build/<target>/ds2rb(.exe)  <- the game
 ```
 
 Copy your dump into the `games/` folder. The file name doesn't matter.
+If you have the update and the DLC, put their `.cia` files in `games/` too;
+`make setup` recognizes each one (game, update, DLC) and installs them in
+that order:
+
+- The **update** replaces the game code with version 1.1. `make recomp`
+  then recompiles 1.1 (it reads `data/version.txt`).
+- The **DLC** (the six bonus battles: Macca Makes an Escape, Let the Demons
+  Grow, Addonetarium, All Skills Must Go!, The Beginner's Brawl, Lost Demon
+  Rescue) is extracted into `data/dlc/`. In the game it appears in the Apps
+  menu (X), under the data transfer menu, once the story unlocks it.
+
+If you add the update or DLC later, run `make setup recomp` and build again.
+Saves work with both versions.
 
 ## Building
 
@@ -111,7 +125,7 @@ build\windows\ds2rb.exe --data data    # Windows, from this folder
 ```
 
 On Windows, `run.bat` in this folder starts whichever build you made.
-`run.sh` does the same on Linux, you may need to run `chmod +x run.sh`. To play from somewhere else, copy the
+`run.sh` does the same on Linux. To play from somewhere else, copy the
 `.exe` and pass the full path of `data` with `--data`.
 
 ### Controls
@@ -126,8 +140,30 @@ On Windows, `run.bat` in this folder starts whichever build you made.
 | Circle Pad | I J K L |
 | Touch screen | Left mouse button on the bottom screen |
 
+| Cheat menu | F1 |
+
 Saves are kept in `data/save/`. The window can be resized. The title bar
 shows the frame rate and how busy the renderer is.
+
+### Cheat menu
+
+Press **F1** in the game to open the cheat menu over the top screen (the
+game pauses its input while it's open). Arrow keys move, Enter chooses,
+Esc goes back, F1 closes it; in lists you can type to search and use
+Page Up / Page Down to jump.
+
+| Item | What it does |
+| --- | --- |
+| Max Macca | sets your money to 999,999 |
+| Add a demon | any demon, at any level from its base level to 99, into a free stock slot (also registered in the compendium) |
+| Party and stock | per member or demon: level 99, all stats 40, or both; max Fate |
+| Learn skills | unlock any command, auto or racial skill for inheritance, one by one or all at once. This covers everything add-ons and cracking give you, since in this game add-ons are skills |
+| Max Fate with everyone | Fate level 5 with every character |
+| Fill the compendium | registers every demon |
+
+Changes are made in memory; **save in the game** to keep them. The menu
+is meant to be used outside battles and cutscenes (on the map or in a
+menu).
 
 ### If something goes wrong
 
@@ -152,13 +188,14 @@ Environment variables used for debugging:
 
 | Folder | What's in it |
 | --- | --- |
-| `setup/` | `ds2rb_setup`: reads decrypted 3DS containers (NCSD, CIA, NCCH), checks the game version and extracts `code.bin` and the RomFS. |
-| `recomp/` | The static recompiler (Go). It decodes ARMv6K/Thumb/VFPv2, discovers functions (with `functions.csv`, a table of addresses, names and sizes from the reverse engineering, and `hints.txt`) and writes one C function per game function. `recomp/runtime/recomp.h` is the header the generated code is compiled with. |
-| `runtime/` | The C++ runtime: a kernel with guest threads, synchronization and timers (`kernel.cpp`), IPC services such as fs, gsp, dsp, apt, hid, cfg and y2r (`svc_*.cpp`), the PICA200 GPU (`pica*.cpp`), DSP audio mixing, the window and input for Win32 and SDL2, and patches for the hand-written ARM the recompiler can't express (coroutines in `patches.cpp`). |
+| `setup/` | `ds2rb_setup`: reads decrypted 3DS containers (NCSD, CIA, NCCH), checks the game version and extracts `code.bin`, the RomFS, the update's code and the DLC contents. |
+| `recomp/` | The static recompiler (Go). It decodes ARMv6K/Thumb/VFPv2, discovers functions (with `functions.csv`, a table of addresses, names and sizes from the reverse engineering, and `hints.txt`) and writes one C function per game function. `functions_v11.csv` and `hints_v11.txt` are the same tables for version 1.1. `recomp/runtime/recomp.h` is the header the generated code is compiled with. |
+| `runtime/` | The C++ runtime: a kernel with guest threads, synchronization and timers (`kernel.cpp`), IPC services such as fs, gsp, dsp, apt, hid, cfg, y2r and am (`svc_*.cpp`; am and fs serve the DLC), the PICA200 GPU (`pica*.cpp`), DSP audio mixing, the window and input for Win32 and SDL2, patches for the hand-written ARM the recompiler can't express (coroutines in `patches.cpp`), and the cheat menu (`cheats.cpp`). |
 
 ## Status
 
 The game boots, plays the opening movie with sound, and gets through New
-Game, the prologue and registration. Known gaps: no hardware-accelerated
-renderer yet (it renders in software on all cores), no fragment lighting,
-no DLC.
+Game, the prologue and registration, loads saves, and runs version 1.0 or
+1.1 with the DLC. Known gaps: no hardware-accelerated renderer yet (it
+renders in software on all cores), no fragment lighting, and some
+bottom-screen text (load and difficulty screens) draws garbled.

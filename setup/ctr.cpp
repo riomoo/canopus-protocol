@@ -22,6 +22,29 @@ void require(bool ok, const std::string& what)
         throw Error(what);
 }
 
+
+// Size of a TMD/ticket signature block (signature + padding) by type.
+uint64_t signatureBlockSize(uint32_t type)
+{
+    switch (type) {
+    case 0x010000: case 0x010003: return 4 + 0x200 + 0x3C;
+    case 0x010001: case 0x010004: return 4 + 0x100 + 0x3C;
+    case 0x010002: case 0x010005: return 4 + 0x3C + 0x40;
+    default: throw Error("unknown signature type in CIA metadata");
+    }
+}
+
+// Validates a name read from the RomFS before using it as a path component.
+std::filesystem::path safeName(const std::u16string& name)
+{
+    require(!name.empty() && name != u"." && name != u"..", "invalid name in RomFS");
+    for (char16_t c : name)
+        require(c != u'/' && c != u'\\' && c != u':' && c >= 0x20, "invalid character in RomFS name");
+    return std::filesystem::path(name);
+}
+
+}  // namespace
+
 NcchInfo parseNcch(File& f, uint64_t base)
 {
     const auto h = f.readVec(base, 0x200);
@@ -47,28 +70,6 @@ NcchInfo parseNcch(File& f, uint64_t base)
     n.romfsSize   = uint64_t(le32(&h[0x1B4])) * kMediaUnit;
     return n;
 }
-
-// Size of a TMD/ticket signature block (signature + padding) by type.
-uint64_t signatureBlockSize(uint32_t type)
-{
-    switch (type) {
-    case 0x010000: case 0x010003: return 4 + 0x200 + 0x3C;
-    case 0x010001: case 0x010004: return 4 + 0x100 + 0x3C;
-    case 0x010002: case 0x010005: return 4 + 0x3C + 0x40;
-    default: throw Error("unknown signature type in CIA metadata");
-    }
-}
-
-// Validates a name read from the RomFS before using it as a path component.
-std::filesystem::path safeName(const std::u16string& name)
-{
-    require(!name.empty() && name != u"." && name != u"..", "invalid name in RomFS");
-    for (char16_t c : name)
-        require(c != u'/' && c != u'\\' && c != u':' && c >= 0x20, "invalid character in RomFS name");
-    return std::filesystem::path(name);
-}
-
-}  // namespace
 
 File::File(const std::filesystem::path& p) : in_(p, std::ios::binary)
 {
@@ -132,9 +133,25 @@ Container open(File& f)
         const uint16_t contentCount = uint16_t(tmd[hdr + 0x9E] << 8 | tmd[hdr + 0x9F]);
         require(contentCount > 0, "CIA has no contents");
 
-        // Content chunk records follow the header and the 64 info records.
-        const uint8_t* chunk0 = &tmd[hdr + 0xC4 + 0x900];
-        const uint16_t type = uint16_t(chunk0[6] << 8 | chunk0[7]);
+        c.titleVersion = uint16_t(tmd[hdr + 0x9C] << 8 | tmd[hdr + 0x9D]);
+        require(tmd.size() >= hdr + 0xC4 + 0x900 + 0x30 * uint64_t(contentCount), "CIA TMD is truncated");
+
+        // Content chunk records follow the header and the 64 info records;
+        // the contents are stored in that order, each 64-byte aligned.
+        uint64_t at = contentOff;
+        for (uint16_t i = 0; i < contentCount; ++i) {
+            const uint8_t* ch = &tmd[hdr + 0xC4 + 0x900 + 0x30 * i];
+            CiaContent cc;
+            cc.id = be32(ch);
+            cc.index = uint16_t(ch[4] << 8 | ch[5]);
+            cc.type = uint16_t(ch[6] << 8 | ch[7]);
+            cc.size = be64(ch + 8);
+            cc.offset = at;
+            cc.encrypted = (cc.type & 1) != 0;
+            c.contents.push_back(cc);
+            at = align(at + cc.size, 64);
+        }
+        const uint16_t type = c.contents[0].type;
         c.ciaContentEncrypted = (type & 1) != 0;
         if (c.ciaContentEncrypted)
             return c;  // caller reports it; the NCCH can't be read

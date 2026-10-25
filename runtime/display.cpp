@@ -2,6 +2,7 @@
 // optionally written to image files (DS2RB_DUMP=<every n frames>, into
 // ./frames).
 #include "display.h"
+#include "cheats.h"
 #include "gpu.h"
 #include "kernel.h"
 #include "window.h"
@@ -105,8 +106,15 @@ void Present()
     if (s_window) {
         static std::vector<u32> top(400 * 240), bottom(320 * 240);
         int w, h;
-        const bool t = Capture(TOP, top.data(), &w, &h);
+        bool t = Capture(TOP, top.data(), &w, &h);
         const bool b = Capture(BOTTOM, bottom.data(), &w, &h);
+        if (cheat::Open() || !t) {
+            if (!t) std::fill(top.begin(), top.end(), 0xFF000000u);
+            cheat::Frame(top.data());
+            t = t || cheat::Open();
+        } else {
+            cheat::Frame(nullptr);  // a pending F1
+        }
         window::Show(t ? top.data() : nullptr, b ? bottom.data() : nullptr);
         // Once a second: the game's frame rate and how busy the GPU is.
         static auto last = std::chrono::steady_clock::now();
@@ -133,6 +141,7 @@ void Present()
             lastSwaps = swaps;
         }
     }
+    if (!s_window) cheat::Frame(nullptr);  // scripted cheat keys (tests)
     static const long every = std::getenv("DS2RB_DUMP") ? std::atol(std::getenv("DS2RB_DUMP")) : 0;
     if (every <= 0 || s_frame % every) return;
     std::filesystem::create_directories("frames");
@@ -141,6 +150,7 @@ void Present()
         std::vector<u32> px(400 * 240);
         if (!Capture(screen, px.data(), &w, &h)) continue;
         px.resize(w * h);
+        if (screen == TOP && cheat::Open()) cheat::Frame(px.data());
         char name[64];
         std::snprintf(name, sizeof name, "frames/%s_%06llu.ppm", screen ? "bottom" : "top", (unsigned long long)s_frame);
         WritePpm(name, px, w, h);
@@ -156,6 +166,7 @@ struct Press {
     u32 buttons;
     bool touch;
     u16 tx, ty;
+    std::vector<int> cheatKeys;  // F1, CUP, CDOWN, CLEFT, CRIGHT, CENTER, CBACK, CPGUP, CPGDN, "C=text"
 };
 
 std::vector<Press> ParseScript(const char* text)
@@ -168,7 +179,7 @@ std::vector<Press> ParseScript(const char* text)
         if (end == std::string::npos) end = all.size();
         const std::string item = all.substr(at, end - at);
         at = end + 1;
-        Press p = {0, 0, 1, 6, 0, false, 0, 0};
+        Press p = {0, 0, 1, 6, 0, false, 0, 0, {}};
         const size_t c1 = item.find(':');
         if (c1 == std::string::npos) continue;
         const std::string when = item.substr(0, c1);
@@ -194,6 +205,14 @@ std::vector<Press> ParseScript(const char* text)
                 {"LEFT", input::LEFT}, {"RIGHT", input::RIGHT}};
             for (auto& k : kNames)
                 if (name == k.n) p.buttons |= k.v;
+            static const struct { const char* n; int k; } kCheat[] = {
+                {"F1", cheat::KEY_TOGGLE}, {"CUP", cheat::KEY_UP}, {"CDOWN", cheat::KEY_DOWN}, {"CLEFT", cheat::KEY_LEFT},
+                {"CRIGHT", cheat::KEY_RIGHT}, {"CENTER", cheat::KEY_ENTER}, {"CBACK", cheat::KEY_BACK},
+                {"CPGUP", cheat::KEY_PAGE_UP}, {"CPGDN", cheat::KEY_PAGE_DOWN}};
+            for (auto& k : kCheat)
+                if (name == k.n) p.cheatKeys.push_back(k.k);
+            if (name.rfind("C=", 0) == 0)
+                for (size_t i = 2; i < name.size(); ++i) p.cheatKeys.push_back(name[i] == '_' ? ' ' : name[i]);
             if (name.rfind("TOUCH@", 0) == 0) {
                 p.touch = true;
                 p.tx = (u16)std::atoi(name.c_str() + 6);
@@ -213,6 +232,8 @@ input::State PollInput()
     for (const Press& p : script) {
         if (s_frame < p.first || s_frame > p.last + p.hold) continue;
         const u64 phase = (s_frame - p.first) % p.every;
+        if (phase == 0 && s_frame <= p.last)
+            for (int k : p.cheatKeys) cheat::PushKey(k);
         if (phase >= p.hold) continue;
         st.buttons |= p.buttons;
         if (p.touch) {

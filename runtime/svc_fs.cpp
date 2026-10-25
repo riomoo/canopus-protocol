@@ -99,6 +99,24 @@ struct Path {
 };
 
 // The title id in an NCCH archive path (archive 0x2345678A).
+// Add-on content (DLC): content `index` of the player's DLC, extracted by
+// ds2rb_setup into data/dlc/<index>/.
+const RomFs* DlcContent(u32 index)
+{
+    static std::map<u32, std::unique_ptr<RomFs>> built;
+    auto it = built.find(index);
+    if (it != built.end()) return it->second.get();
+    const fs::path dir = fs::path(g_dataDir) / "dlc" / std::to_string(index);
+    std::error_code ec;
+    std::unique_ptr<RomFs> image;
+    if (fs::is_directory(dir, ec)) {
+        image = std::make_unique<RomFs>();
+        if (!image->Build(dir.string(), dir.string() + ".index")) image.reset();
+    }
+    Log(image ? LOG_INFO : LOG_WARN, "fs", "DLC content %u %s", index, image ? "opened" : "is not installed");
+    return (built[index] = std::move(image)).get();
+}
+
 u64 TitleOf(const Path& archivePath)
 {
     u64 id = 0;
@@ -250,6 +268,14 @@ struct Fs : Service {
     // Opens a file in an archive; flags 1 read, 2 write, 4 create.
     u32 Open(u32 archiveId, const std::string& root, const Path& path, u32 flags, u32* handle, u64 titleId = 0)
     {
+        if (archiveId == 0x2345678A && (titleId >> 32) == 0x0004008C) {  // DLC: the file path names the content
+            u32 index = 0;
+            if (path.bytes.size() >= 8) std::memcpy(&index, path.bytes.data() + 4, 4);
+            const RomFs* image = DlcContent(index);
+            if (!image) return RESULT_NOT_FOUND;
+            *handle = OpenFileSession("DLC content", image, "");
+            return 0;
+        }
         if (archiveId == 0x2345678A) {  // another title's content: system data
             const RomFs* image = SystemArchive(titleId);
             if (!image) return RESULT_NOT_FOUND;

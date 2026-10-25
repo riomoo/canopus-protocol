@@ -20,7 +20,17 @@ HOSTCXX ?= c++
 JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
 SETUP_TOOL := $(BUILD)/tools/ds2rb_setup
-RECOMP_SRC := $(wildcard recomp/*.go recomp/arm/*.go) recomp/go.mod recomp/hints.txt recomp/functions.csv recomp/runtime/recomp.h
+# The game version in data/ (1.1 once the update is installed) picks the
+# recompiler's function table and hints.
+VERSION := $(shell cat $(DATA)/version.txt 2>/dev/null || echo 1.0)
+ifeq ($(VERSION),1.1)
+FUNCS := functions_v11.csv
+HINTS := hints_v11.txt
+else
+FUNCS := functions.csv
+HINTS := hints.txt
+endif
+RECOMP_SRC := $(wildcard recomp/*.go recomp/arm/*.go) recomp/go.mod recomp/$(HINTS) recomp/$(FUNCS) recomp/runtime/recomp.h
 TARGETS := linux linux-compat windows windows-zig
 
 .PHONY: help setup recomp $(TARGETS) run clean distclean
@@ -47,8 +57,9 @@ $(DATA)/code.bin:
 $(GEN)/recomp.h: $(DATA)/code.bin $(RECOMP_SRC)
 	rm -rf $(GEN)
 	@mkdir -p $(GEN)
+	@echo "Recompiling game version $(VERSION)"
 	cd recomp && go run . -code $(abspath $(DATA)/code.bin) -exheader $(abspath $(DATA)/exheader.bin) \
-		-funcs functions.csv -hints hints.txt -out $(abspath $(GEN))
+		-funcs $(FUNCS) -hints $(HINTS) -out $(abspath $(GEN))
 
 recomp: $(GEN)/recomp.h
 
