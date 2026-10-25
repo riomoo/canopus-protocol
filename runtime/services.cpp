@@ -11,12 +11,14 @@ void RegisterMisc();
 void RegisterGsp();
 void RegisterDsp();
 void RegisterY2r();
+void RegisterAm();
 
 void RegisterAll()
 {
     RegisterApt();
     RegisterFs();
     RegisterMisc();
+    RegisterAm();
     RegisterGsp();
     RegisterDsp();
     RegisterY2r();

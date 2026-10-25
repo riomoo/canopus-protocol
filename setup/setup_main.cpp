@@ -2,7 +2,9 @@
 //
 // Drop a decrypted .3ds, .cci, .cia or .cxi of your own copy into the
 // "games" folder next to this program and run it. It extracts code.bin and
-// the RomFS into the "data" folder. Nothing from the game ships with the port.
+// the RomFS into the "data" folder. If the 1.1 update (.cia) is there too,
+// its code replaces the original's; the DLC (.cia) goes into data/dlc.
+// Nothing from the game ships with the port.
 //
 //   ds2rb_setup [games_folder] [data_folder]
 
@@ -30,6 +32,15 @@ const std::map<std::string, std::string> kSupportedCode = {
     {DS2RB_TEST_CODE_HASH, "test build"},
 #endif
 };
+
+// The 1.1 update's code, by SHA-256 of the decompressed code.bin.
+const std::map<std::string, std::string> kSupportedUpdate = {
+    {"fac5ce8f1244c978ed9cce049f4c988d93bbc6401aeab4729caec3b196be3487", "1.1"},
+};
+
+constexpr uint64_t kGameTitle = 0x0004000000159500ull;
+constexpr uint64_t kUpdateTitle = 0x0004000E00159500ull;
+constexpr uint64_t kDlcTitle = 0x0004008C00159500ull;
 
 std::string hex64(uint64_t v)
 {
@@ -78,16 +89,7 @@ bool processGame(const fs::path& file, const fs::path& dataDir)
     const ctr::Container c = ctr::open(f);
 
     if (c.kind == ctr::ContainerKind::CIA) {
-        const uint32_t high = uint32_t(c.titleId >> 32);
         std::cout << "  CIA, title " << hex64(c.titleId) << "\n";
-        if (high == 0x0004008C) {
-            std::cout << "  This is DLC. DLC support comes after the first playable version; skipping.\n";
-            return false;
-        }
-        if (high == 0x0004000E) {
-            std::cout << "  This is an update, not the game itself; skipping.\n";
-            return false;
-        }
         if (c.ciaContentEncrypted) {
             std::cout << kEncryptedHelp;
             return false;
@@ -126,6 +128,8 @@ bool processGame(const fs::path& file, const fs::path& dataDir)
     writeFile(dataDir / "code.bin", code.data(), code.size());
     if (!n.exheader.empty())
         writeFile(dataDir / "exheader.bin", n.exheader.data(), n.exheader.size());
+    std::ofstream(dataDir / "version.txt", std::ios::binary) << "1.0";
+    fs::remove(dataDir / "update_done.txt");
 
     const fs::path romfsDir = dataDir / "romfs";
     if (fs::exists(romfsDir))
@@ -146,6 +150,83 @@ bool processGame(const fs::path& file, const fs::path& dataDir)
 
     std::ofstream(marker, std::ios::binary) << fingerprint(file);
     return true;
+}
+
+// The update: its code replaces the original game's (the RomFS stays).
+bool processUpdate(const fs::path& file, ctr::File& f, const ctr::Container& c, const fs::path& dataDir)
+{
+    std::cout << "\n" << file.filename().u8string() << ": update\n";
+    if (c.ciaContentEncrypted || c.main.encrypted) {
+        std::cout << kEncryptedHelp;
+        return false;
+    }
+    if (!fs::exists(dataDir / "code.bin")) {
+        std::cout << "  Set up the game itself first (put its .3ds or .cia in the same folder).\n";
+        return false;
+    }
+    const fs::path marker = dataDir / "update_done.txt";
+    if (fs::exists(marker) && readText(marker) == fingerprint(file) && readText(dataDir / "version.txt") != "1.0") {
+        std::cout << "  Already installed; nothing to do.\n";
+        return true;
+    }
+    std::cout << "  Reading code... " << std::flush;
+    const std::vector<uint8_t> code = ctr::readCode(f, c.main);
+    Sha256 sha;
+    sha.update(code.data(), code.size());
+    const auto known = kSupportedUpdate.find(sha.hex());
+    if (known == kSupportedUpdate.end()) {
+        std::cout << "\n  This update isn't supported (code fingerprint " << sha.hex().substr(0, 16) << "...).\n";
+        return false;
+    }
+    std::cout << "OK (version " << known->second << ")\n";
+    writeFile(dataDir / "code.bin", code.data(), code.size());
+    writeFile(dataDir / "exheader.bin", c.main.exheader.data(), c.main.exheader.size());
+    std::ofstream(dataDir / "version.txt", std::ios::binary) << known->second;
+    std::ofstream(marker, std::ios::binary) << fingerprint(file);
+    std::cout << "  The game will now run as version " << known->second << ". Run 'make recomp' again.\n";
+    return true;
+}
+
+// The DLC: each content's RomFS goes into data/dlc/<content index>/, and
+// data/dlc/contents.txt lists them for the port's am:app service.
+bool processDlc(const fs::path& file, ctr::File& f, const ctr::Container& c, const fs::path& dataDir)
+{
+    std::cout << "\n" << file.filename().u8string() << ": DLC, " << c.contents.size() << " contents\n";
+    const fs::path dlcDir = dataDir / "dlc";
+    const fs::path marker = dataDir / "dlc_done.txt";
+    if (fs::exists(marker) && readText(marker) == fingerprint(file) && fs::exists(dlcDir / "contents.txt")) {
+        std::cout << "  Already installed; nothing to do.\n";
+        return true;
+    }
+    fs::remove(marker);
+    if (fs::exists(dlcDir))
+        fs::remove_all(dlcDir);
+    fs::create_directories(dlcDir);
+    std::ofstream list(dlcDir / "contents.txt", std::ios::binary);
+    list << "# index type id size\n";
+    size_t done = 0;
+    for (const auto& cc : c.contents) {
+        if (cc.encrypted) {
+            std::cout << "  Content " << cc.index << " is encrypted; skipped.\n" << kEncryptedHelp;
+            continue;
+        }
+        const ctr::NcchInfo n = ctr::parseNcch(f, cc.offset);
+        if (n.encrypted) {
+            std::cout << "  Content " << cc.index << " is encrypted; skipped.\n" << kEncryptedHelp;
+            continue;
+        }
+        if (n.romfsSize)
+            ctr::extractRomfs(f, n, dlcDir / std::to_string(cc.index), [](uint64_t, uint64_t) {});
+        char line[96];
+        std::snprintf(line, sizeof line, "%u %04x %08x %llu\n", cc.index, cc.type, cc.id, (unsigned long long)cc.size);
+        list << line;
+        ++done;
+    }
+    list.close();
+    std::cout << "  " << done << " contents installed.\n";
+    if (done)
+        std::ofstream(marker, std::ios::binary) << fingerprint(file);
+    return done > 0;
 }
 
 }  // namespace
@@ -183,23 +264,57 @@ int main(int argc, char** argv)
         return finish(1, interactive);
     }
 
-    bool ok = false;
+    // The game first, then its update, then the DLC.
+    struct Item {
+        fs::path path;
+        int order;  // 0 game, 1 update, 2 DLC
+    };
+    std::vector<Item> items;
     int seen = 0;
     for (const auto& entry : fs::directory_iterator(gamesDir)) {
         if (!entry.is_regular_file() || !isGameFile(entry.path()))
             continue;
         ++seen;
+        int order = 0;
         try {
-            ok = processGame(entry.path(), dataDir) || ok;
+            ctr::File f(entry.path());
+            const ctr::Container c = ctr::open(f);
+            if (c.titleId == kUpdateTitle) order = 1;
+            else if (c.titleId == kDlcTitle) order = 2;
+            else if ((c.titleId >> 32) == 0x0004000E || (c.titleId >> 32) == 0x0004008C) order = 3;  // another game's
+        } catch (const std::exception&) {
+        }
+        items.push_back({entry.path(), order});
+    }
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.order < b.order; });
+
+    bool ok = false;
+    for (const auto& item : items) {
+        try {
+            if (item.order == 0) {
+                if (!ok) ok = processGame(item.path, dataDir);
+            } else if (item.order == 3) {
+                std::cout << "\n" << item.path.filename().u8string() << ": an update or DLC for another game; skipped.\n";
+            } else {
+                ctr::File f(item.path);
+                const ctr::Container c = ctr::open(f);
+                if (item.order == 1) processUpdate(item.path, f, c, dataDir);
+                else processDlc(item.path, f, c, dataDir);
+            }
         } catch (const std::exception& e) {
             std::cout << "  Error: " << e.what() << "\n";
         }
-        if (ok)
-            break;
     }
+    (void)kGameTitle;
 
     if (seen == 0)
         std::cout << "No .3ds, .cci, .cia or .cxi files in " << gamesDir.u8string() << ".\n";
+    // The game itself may have been set up on an earlier run (only the update
+    // or DLC is in the folder this time).
+    if (!ok && fs::exists(dataDir / "setup_done.txt") && fs::exists(dataDir / "romfs"))
+        ok = true;
+    else if (!ok && fs::exists(dataDir / "code.bin"))
+        std::cout << "\nThe game itself isn't set up yet: put your game dump in " << gamesDir.u8string() << " too.\n";
     std::cout << (ok ? "\nSetup complete.\n" : "\nSetup did not finish.\n");
     return finish(ok ? 0 : 1, interactive);
 }

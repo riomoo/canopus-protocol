@@ -6,6 +6,7 @@
 // Enter = START, Backspace = SELECT, I/J/K/L = Circle Pad. The left mouse
 // button on the bottom screen touches it.
 #include "window.h"
+#include "cheats.h"
 
 #ifdef _WIN32
 
@@ -151,6 +152,27 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_ERASEBKGND:
         return 1;
     case WM_KEYDOWN:
+        // F1 and, while it is open, the keys that drive the cheat menu.
+        if (wp == VK_F1) { cheat::PushKey(cheat::KEY_TOGGLE); return 0; }
+        if (cheat::Open()) {
+            int k = 0;
+            switch (wp) {
+            case VK_UP: k = cheat::KEY_UP; break;
+            case VK_DOWN: k = cheat::KEY_DOWN; break;
+            case VK_LEFT: k = cheat::KEY_LEFT; break;
+            case VK_RIGHT: k = cheat::KEY_RIGHT; break;
+            case VK_RETURN: k = cheat::KEY_ENTER; break;
+            case VK_ESCAPE: k = cheat::KEY_BACK; break;
+            case VK_BACK: k = cheat::KEY_ERASE; break;
+            case VK_PRIOR: k = cheat::KEY_PAGE_UP; break;
+            case VK_NEXT: k = cheat::KEY_PAGE_DOWN; break;
+            }
+            if (k) cheat::PushKey(k);
+            s_buttons = 0;
+            s_circle = 0;
+            return 0;
+        }
+        [[fallthrough]];
     case WM_KEYUP: {
         const bool down = msg == WM_KEYDOWN;
         if (const u32 b = KeyButton(wp)) {
@@ -163,6 +185,9 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
+    case WM_CHAR:  // typing searches the cheat menu's lists
+        if (cheat::Open() && wp >= 32 && wp < 127) cheat::PushKey((int)wp);
+        return 0;
     case WM_KILLFOCUS:  // keys released elsewhere would stay held
         s_buttons = 0;
         s_circle = 0;
@@ -257,6 +282,7 @@ void SetStatus(const char* text)
 input::State Input()
 {
     input::State s;
+    if (cheat::Open()) return s;  // the menu has the keys
     s.buttons = s_buttons;
     s.touch = s_touch;
     s.touchX = (u16)s_touchX.load();

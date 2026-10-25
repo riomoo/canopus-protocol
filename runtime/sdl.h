@@ -19,7 +19,7 @@ constexpr int TEXTUREACCESS_STREAMING = 1;
 constexpr u16 AUDIO_S16LSB = 0x8010;
 
 enum EventType : u32 {
-    QUIT = 0x100, WINDOWEVENT = 0x200, KEYDOWN = 0x300, KEYUP = 0x301,
+    QUIT = 0x100, WINDOWEVENT = 0x200, KEYDOWN = 0x300, KEYUP = 0x301, TEXTINPUT = 0x303,
     MOUSEMOTION = 0x400, MOUSEBUTTONDOWN = 0x401, MOUSEBUTTONUP = 0x402,
 };
 
@@ -43,9 +43,14 @@ struct MouseButtonEvent {
     u8 button, state, clicks, padding1;
     int32_t x, y;
 };
+struct TextInputEvent {
+    u32 type, timestamp, windowID;
+    char text[32];
+};
 union Event {
     u32 type;
     KeyboardEvent key;
+    TextInputEvent text;
     MouseMotionEvent motion;
     MouseButtonEvent button;
     u8 padding[56];
