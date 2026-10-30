@@ -247,6 +247,11 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SIZE:
         if (s_gl.on) DrawGl(hwnd);
         return 0;
+    case 0x02E0: {  // WM_DPICHANGED: moved to a screen with other scaling
+        const RECT* r = (const RECT*)lp;
+        SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
     case WM_APP + 1: {  // a new status line
         std::string t;
         {
@@ -333,9 +338,35 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// Tell Windows the window handles display scaling itself (per monitor), so
+// it gets real pixels: without this, Windows scales the window as a picture
+// and some drivers then draw the OpenGL output a few pixels off. Returns the
+// scale (1.0 = 100%).
+double DpiAware()
+{
+    HMODULE user = GetModuleHandleW(L"user32.dll");
+    typedef BOOL(WINAPI * SetContext)(HANDLE);
+    typedef UINT(WINAPI * GetDpi)();
+    if (auto set = (SetContext)(void*)GetProcAddress(user, "SetProcessDpiAwarenessContext")) {
+        if (!set((HANDLE)-4)) set((HANDLE)-3);  // per monitor v2, else per monitor
+    } else {
+        SetProcessDPIAware();
+    }
+    UINT dpi = 96;
+    if (auto get = (GetDpi)(void*)GetProcAddress(user, "GetDpiForSystem")) {
+        dpi = get();
+    } else {
+        HDC dc = GetDC(nullptr);
+        dpi = (UINT)GetDeviceCaps(dc, LOGPIXELSX);
+        ReleaseDC(nullptr, dc);
+    }
+    return dpi ? dpi / 96.0 : 1.0;
+}
+
 void Run(std::string title, std::atomic<int>* ready)
 {
     s_title = title;
+    const double scale = DpiAware();
     HINSTANCE inst = GetModuleHandleW(nullptr);
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof wc;
@@ -343,16 +374,29 @@ void Run(std::string title, std::atomic<int>* ready)
     wc.lpfnWndProc = Proc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     // The icon from res/canopus.rc (resource 1), large and small.
     wc.hIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
     wc.hIconSm = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     wc.lpszClassName = L"ds2rb";
     RegisterClassExW(&wc);
-    RECT r = {0, 0, W * 2, H * 2};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    // Twice the 3DS size at 100% scaling, scaled with the display, but no
+    // bigger than the screen's work area (the taskbar left out).
+    const DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    RECT work = {0, 0, 1920, 1040};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    double zoom = 2.0 * scale;
+    for (;;) {
+        RECT r = {0, 0, (LONG)(W * zoom), (LONG)(H * zoom)};
+        AdjustWindowRect(&r, style, FALSE);
+        if ((r.bottom - r.top <= work.bottom - work.top && r.right - r.left <= work.right - work.left) || zoom <= 1.0) break;
+        zoom -= 0.25;
+    }
+    RECT r = {0, 0, (LONG)(W * zoom), (LONG)(H * zoom)};
+    AdjustWindowRect(&r, style, FALSE);
     std::wstring wtitle(title.begin(), title.end());
-    s_hwnd = CreateWindowW(L"ds2rb", wtitle.c_str(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
-                           r.bottom - r.top, nullptr, nullptr, inst, nullptr);
+    s_hwnd = CreateWindowW(L"ds2rb", wtitle.c_str(), style | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
+                           nullptr, nullptr, inst, nullptr);
     *ready = s_hwnd ? 1 : -1;
     if (!s_hwnd) return;
     if (g_options.output != "gdi" && !InitGl(s_hwnd)) g_options.output = "gdi";

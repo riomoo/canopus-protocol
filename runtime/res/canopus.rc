@@ -2,8 +2,8 @@
 1 ICON "canopus.ico"
 
 1 VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION 2,0,1,0
+PRODUCTVERSION 2,0,1,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -11,8 +11,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "Canopus Protocol"
       VALUE "ProductName", "Canopus Protocol"
-      VALUE "FileVersion", "1.0"
-      VALUE "ProductVersion", "1.0"
+      VALUE "FileVersion", "2.0.1"
+      VALUE "ProductVersion", "2.0.1"
       VALUE "Comments", "Unofficial PC port of Devil Survivor 2 Record Breaker, built from your own game files"
     END
   END
