@@ -24,12 +24,12 @@ ifeq ($(TARGET),windows)
 CC := x86_64-w64-mingw32-gcc-win32
 CXX := x86_64-w64-mingw32-g++-win32
 EXE := ds2rb.exe
-LDLIBS := -static -lm -lgdi32 -luser32 -lwinmm -lsynchronization -Wl,--stack,67108864
+LDLIBS := -static -lm -lopengl32 -lgdi32 -luser32 -lwinmm -lsynchronization -Wl,--stack,67108864
 else ifeq ($(TARGET),windows-zig)
 CC := $(ZIG) cc -target x86_64-windows-gnu
 CXX := $(ZIG) c++ -target x86_64-windows-gnu
 EXE := ds2rb.exe
-LDLIBS := -lgdi32 -luser32 -lwinmm -Wl,--stack,67108864
+LDLIBS := -lopengl32 -lgdi32 -luser32 -lwinmm -Wl,--stack,67108864
 else ifeq ($(TARGET),linux-compat)
 CC := $(ZIG) cc -target x86_64-linux-gnu.2.28
 CXX := $(ZIG) c++ -target x86_64-linux-gnu.2.28
@@ -45,6 +45,8 @@ $(error unknown TARGET "$(TARGET)": use linux, linux-compat, windows or windows-
 endif
 
 OUT := $(BUILD)/$(TARGET)
+# Windows: the icon and version information (res/canopus.rc).
+RES_OBJ := $(if $(filter windows,$(TARGET)),$(OUT)/obj/rt/canopus_res.o,$(if $(filter windows-zig,$(TARGET)),$(OUT)/obj/rt/canopus.res,))
 G := $(if $(filter 1,$(DEBUG)),-g,)
 STRIP := $(if $(filter 1,$(DEBUG)),,-s)
 GEN_OPT ?= -O1
@@ -56,9 +58,17 @@ GEN_OBJ := $(patsubst $(GEN)/%.c,$(OUT)/obj/gen/%.o,$(GEN_SRC))
 RT_SRC := $(wildcard *.cpp)
 RT_OBJ := $(patsubst %.cpp,$(OUT)/obj/rt/%.o,$(RT_SRC))
 
-$(OUT)/$(EXE): $(GEN_OBJ) $(RT_OBJ)
+$(OUT)/$(EXE): $(GEN_OBJ) $(RT_OBJ) $(RES_OBJ)
 	@test -n "$(GEN_SRC)" || { echo "No generated code in $(GEN): run 'make recomp' first."; exit 1; }
 	$(CXX) $(STRIP) -o $@ $^ $(LDLIBS)
+
+$(OUT)/obj/rt/canopus_res.o: res/canopus.rc res/canopus.ico
+	@mkdir -p $(dir $@)
+	x86_64-w64-mingw32-windres -O coff -o $@ res/canopus.rc
+
+$(OUT)/obj/rt/canopus.res: res/canopus.rc res/canopus.ico
+	@mkdir -p $(dir $@)
+	$(ZIG) rc /fo $@ res/canopus.rc
 
 $(OUT)/obj/gen/%.o: $(GEN)/%.c $(GEN)/recomp.h
 	@mkdir -p $(dir $@)
@@ -68,6 +78,15 @@ $(OUT)/obj/rt/%.o: %.cpp *.h $(GEN)/recomp.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(RT_FLAGS) -c $< -o $@
 
-.PHONY: clean
+# The runtime alone, as a library (the player's machine links it with the
+# game it recompiles): make lib TARGET=windows-zig|linux-compat GEN=<dir with recomp.h>
+LIB := $(OUT)/libcanopus_rt.a
+AR_CMD := $(if $(filter windows-zig linux-compat,$(TARGET)),$(ZIG) ar,ar)
+lib: $(LIB) $(RES_OBJ)
+$(LIB): $(RT_OBJ)
+	rm -f $@
+	$(AR_CMD) rcs $@ $^
+
+.PHONY: clean lib
 clean:
 	rm -rf $(OUT)

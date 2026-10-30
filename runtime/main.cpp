@@ -1,8 +1,10 @@
 // ds2rb: runs the recompiled game. Usage: ds2rb [--data <setup output>] [-v|-vv]
+//   [--no-vsync] [--smooth] [--output gl|gdi|software]
 #include "ipc.h"
 #include "kernel.h"
 #include "audio.h"
 #include "display.h"
+#include "window.h"
 #include "rt.h"
 
 #include <csignal>
@@ -150,6 +152,22 @@ bool LoadProgram()
     }
     if (!ReadFile(g_dataDir + "/code.bin", &code)) {
         Log(LOG_ERROR, "load", "cannot read %s/code.bin", g_dataDir.c_str());
+        return false;
+    }
+    // The recompiled code must come from this very code.bin (the update
+    // changes it): anything else crashes in odd places.
+    u32 crc = 0xFFFFFFFF;
+    for (u8 b : code) {
+        crc ^= b;
+        for (int k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1)));
+    }
+    crc = ~crc;
+    if (crc != rc_code_crc) {
+        Log(LOG_ERROR, "load",
+            "%s/code.bin (CRC %08X) is not the code this build was recompiled from (CRC %08X).\n"
+            "    The game data changed (for example the update was installed) after recompiling.\n"
+            "    Run 'make recomp' and build again.",
+            g_dataDir.c_str(), crc, rc_code_crc);
         return false;
     }
     Exheader& e = g_exheader;
@@ -352,6 +370,9 @@ int main(int argc, char** argv)
         else if (a == "-vv") g_logLevel = LOG_TRACE;
         else if (a == "-q") g_logLevel = LOG_WARN;
         else if (a == "--headless") headless = true;
+        else if (a == "--no-vsync") window::g_options.vsync = false;
+        else if (a == "--smooth") window::g_options.smooth = true;
+        else if (a == "--output" && i + 1 < argc) window::g_options.output = argv[++i];
     }
 #ifndef _WIN32
     struct sigaction sa = {};

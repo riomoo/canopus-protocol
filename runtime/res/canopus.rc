@@ -1,0 +1,23 @@
+// Windows resources for the game: the icon and version information.
+1 ICON "canopus.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Canopus Protocol"
+      VALUE "ProductName", "Canopus Protocol"
+      VALUE "FileVersion", "1.0"
+      VALUE "ProductVersion", "1.0"
+      VALUE "Comments", "Unofficial PC port of Devil Survivor 2 Record Breaker, built from your own game files"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

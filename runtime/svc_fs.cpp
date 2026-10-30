@@ -413,8 +413,10 @@ struct Fs : Service {
             return;
         case 0x0817:  // IsSdmcDetected
         case 0x0818:  // IsSdmcWritable
+            // There is an SD card (data/sdmc): the DLC and the Download
+            // folder in the game's mail need one.
             r.Reply(2, 0);
-            c[2] = 0;
+            c[2] = 1;
             return;
         case 0x084C:  // FormatSaveData
             r.Reply(1, 0);

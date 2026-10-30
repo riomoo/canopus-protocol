@@ -5,8 +5,22 @@
 
 #include "input.h"
 
+#include <string>
+
 namespace rt {
 namespace window {
+
+// How the picture reaches the screen (command line: --no-vsync, --smooth,
+// --output). Set before Open.
+struct Options {
+    bool vsync = true;    // wait for the monitor's refresh: no tearing
+    bool smooth = false;  // bilinear scaling instead of sharp pixels
+    // "" picks the best: OpenGL on Windows (GDI if it fails), SDL's
+    // accelerated renderer on Linux. Or "gl", "gdi" (Windows), "software"
+    // (Linux).
+    std::string output;
+};
+inline Options g_options;
 
 // Opens the window on a thread of its own. False if there is no window here.
 bool Open(const char* title);

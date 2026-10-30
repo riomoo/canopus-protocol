@@ -68,6 +68,12 @@ struct AudioSpec {
     void* userdata;
 };
 
+struct RendererInfo {
+    const char* name;
+    u32 flags, num_texture_formats, texture_formats[16];
+    int max_texture_width, max_texture_height;
+};
+
 struct Api {
     int (*Init)(u32);
     int (*InitSubSystem)(u32);
@@ -87,6 +93,11 @@ struct Api {
     void (*RenderWindowToLogical)(void*, int, int, float*, float*);
     u32 (*OpenAudioDevice)(const char*, int, const AudioSpec*, AudioSpec*, int);
     void (*PauseAudioDevice)(u32, int);
+    int (*SetHint)(const char*, const char*);
+    int (*GetRendererInfo)(void*, RendererInfo*);
+    void* (*CreateRGBSurfaceFrom)(void*, int, int, int, int, u32, u32, u32, u32);
+    void (*SetWindowIcon)(void*, void*);
+    void (*FreeSurface)(void*);
 };
 
 // The API, or null if SDL2 is not installed.

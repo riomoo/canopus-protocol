@@ -49,6 +49,11 @@ const Api* Get()
         get(api.RenderWindowToLogical, "SDL_RenderWindowToLogical", false);
         get(api.OpenAudioDevice, "SDL_OpenAudioDevice");
         get(api.PauseAudioDevice, "SDL_PauseAudioDevice");
+        get(api.SetHint, "SDL_SetHint", false);
+        get(api.GetRendererInfo, "SDL_GetRendererInfo", false);
+        get(api.CreateRGBSurfaceFrom, "SDL_CreateRGBSurfaceFrom", false);
+        get(api.SetWindowIcon, "SDL_SetWindowIcon", false);
+        get(api.FreeSurface, "SDL_FreeSurface", false);
         ok = all;
     });
     return ok ? &api : nullptr;

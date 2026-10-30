@@ -80,6 +80,7 @@ extern "C" const unsigned rc_func_count;
 extern "C" const uint32_t rc_addr[];
 extern "C" const RcFunc rc_orig[];
 extern "C" RcFunc* const rc_slot[];  // what the code calls at rc_addr[i]
+extern "C" const uint32_t rc_code_crc;  // CRC-32 of the code.bin the C was generated from
 // Replaces the function at a guest address (a ported function, a PC
 // replacement). False if there is no function there.
 bool Override(u32 addr, RcFunc fn);

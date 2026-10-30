@@ -9,6 +9,7 @@
 #ifndef _WIN32
 
 #include "sdl.h"
+#include "icon_pixels.h"
 
 #include <atomic>
 #include <chrono>
@@ -90,9 +91,35 @@ void Run(std::string title, std::atomic<int>* ready)
         *ready = -1;
         return;
     }
+    const Options& o = g_options;
+    if (s->SetHint) {
+        if (o.smooth) s->SetHint("SDL_RENDER_SCALE_QUALITY", "1");
+        if (o.output == "software") s->SetHint("SDL_RENDER_DRIVER", "software");
+        else if (o.output == "gl") s->SetHint("SDL_RENDER_DRIVER", "opengl");
+    }
     void* win = s->CreateWindow(title.c_str(), sdl::WINDOWPOS_UNDEFINED, sdl::WINDOWPOS_UNDEFINED, W * 2, H * 2, sdl::WINDOW_RESIZABLE);
-    void* ren = win ? s->CreateRenderer(win, -1, sdl::RENDERER_ACCELERATED) : nullptr;
+    // The window icon (taskbar, title bar, Alt-Tab).
+    if (win && s->CreateRGBSurfaceFrom && s->SetWindowIcon) {
+        static uint32_t icon[64 * 64];
+        std::memcpy(icon, kIconPixels, sizeof icon);
+        if (void* surface = s->CreateRGBSurfaceFrom(icon, 64, 64, 32, 64 * 4, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000)) {
+            s->SetWindowIcon(win, surface);
+            if (s->FreeSurface) s->FreeSurface(surface);
+        }
+    }
+    // Vsync: frames reach the screen between two refreshes, never in the
+    // middle of one (that is what tears the picture).
+    const u32 vsync = o.vsync ? sdl::RENDERER_PRESENTVSYNC : 0;
+    void* ren = win ? s->CreateRenderer(win, -1, sdl::RENDERER_ACCELERATED | vsync) : nullptr;
+    if (win && !ren) ren = s->CreateRenderer(win, -1, vsync);
     if (win && !ren) ren = s->CreateRenderer(win, -1, 0);
+    if (ren && s->GetRendererInfo) {
+        sdl::RendererInfo info = {};
+        if (s->GetRendererInfo(ren, &info) == 0)
+            Log(LOG_INFO, "window", "output: SDL %s, %s, vsync %s", info.name ? info.name : "?",
+                info.flags & sdl::RENDERER_ACCELERATED ? "hardware" : "software",
+                info.flags & sdl::RENDERER_PRESENTVSYNC ? "on" : "off");
+    }
     void* tex = ren ? s->CreateTexture(ren, sdl::PIXELFORMAT_ARGB8888, sdl::TEXTUREACCESS_STREAMING, W, H) : nullptr;
     if (!tex) {
         Log(LOG_WARN, "window", "SDL window: %s", s->GetError());

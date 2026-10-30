@@ -1,6 +1,10 @@
-# Devil Survivor 2 Record Breaker: PC port
+<p align="center">
+  <img src="branding/canopus-protocol-glitch.gif" alt="Canopus Protocol" width="600">
+</p>
 
-A native Windows and Linux version of *Shin Megami Tensei: Devil Survivor 2
+# Canopus Protocol
+
+An unofficial PC port of Devil Survivor 2 Record Breaker: a native Windows and Linux version of *Shin Megami Tensei: Devil Survivor 2
 Record Breaker* (Nintendo 3DS), made by static recompilation. The game's ARM
 code is translated to C on your machine and built together with a runtime
 that does what the 3DS did: its kernel, system services, GPU (a software
@@ -10,6 +14,10 @@ PICA200 renderer), DSP audio, window and input.
 of your own copy of the game. Everything made from it (the extracted data
 and the generated C code) stays on your machine; don't publish `data/` or
 `build/`.
+
+## License
+
+[![Custom badge](https://git.jester-designs.com/riomoo/gopherbook/media/branch/main/docs/images/svgs/PIL.svg)](LICENSE)
 
 ## What you need
 
@@ -40,10 +48,14 @@ that order:
   then recompiles 1.1 (it reads `data/version.txt`).
 - The **DLC** (the six bonus battles: Macca Makes an Escape, Let the Demons
   Grow, Addonetarium, All Skills Must Go!, The Beginner's Brawl, Lost Demon
-  Rescue) is extracted into `data/dlc/`. In the game it appears in the Apps
-  menu (X), under the data transfer menu, once the story unlocks it.
+  Rescue) is extracted into `data/dlc/`. In the game, each battle arrives
+  as a mail in the Download folder (X, then Mail, then Right twice to the
+  Download tab) once the story opens that folder. Read a mail to the end
+  and answer Yes to fight it.
 
-If you add the update or DLC later, run `make setup recomp` and build again.
+If you add the update or DLC later, run `make setup` and build again (for
+example `make setup linux`): the build notices the new game version and
+recompiles by itself.
 Saves work with both versions.
 
 ## Building
@@ -142,6 +154,25 @@ On Windows, `run.bat` in this folder starts whichever build you made.
 
 | Cheat menu | F1 |
 
+### Display options
+
+The picture is drawn with vsync (in step with your monitor's refresh), so
+it doesn't tear. On Windows it goes through OpenGL, or GDI if there is no
+OpenGL driver; on Linux through SDL's accelerated renderer (normally
+OpenGL). Add these after `--data data`, or to the line in `run.bat` /
+`run.sh`:
+
+| Option | Effect |
+| --- | --- |
+| `--no-vsync` | don't wait for the monitor (may tear; a little less input lag) |
+| `--smooth` | smooth (bilinear) scaling instead of sharp pixels |
+| `--output gdi` | Windows: draw with GDI instead of OpenGL |
+| `--output software` | Linux: SDL's software renderer |
+
+`ds2rb.log` says which output is in use (the `window: output:` line).
+The game's 3D is still drawn on the CPU; only the final picture goes
+through the graphics card.
+
 Saves are kept in `data/save/`. The window can be resized. The title bar
 shows the frame rate and how busy the renderer is.
 
@@ -172,6 +203,11 @@ dropouts, stalls (`hitch` and `no new picture` lines), a frame-rate line
 every 10 seconds and, on a crash, the registers and stack. Include it when
 reporting a problem.
 
+If the game stops at start-up with "code.bin ... is not the code this build
+was recompiled from", the game data changed after the last recompile (for
+example the update was installed with an older copy of this Makefile).
+Run `make recomp` and build again.
+
 Options for testing: `-v` logs more, `--headless` runs without a window.
 Environment variables used for debugging:
 
@@ -184,18 +220,47 @@ Environment variables used for debugging:
 | `DS2RB_TRACE=s` | log every system call after s seconds |
 | `DS2RB_GPU_SYNC` | make the renderer synchronous |
 
+## Player downloads
+
+`make package` builds the downloads for players who don't want to build
+anything: `build/dist/CanopusProtocol-windows-x64.zip` and
+`build/dist/CanopusProtocol-linux-x64.tar.gz` (or `make package-windows`,
+`make package-linux`). It needs Go, Zig (yours, from the PATH or
+`ZIG=/path/to/zig`) and zip/tar, on Linux, WSL or MSYS2. The download
+bundles Zig for the player's platform, the same version as yours: your own
+installation for your platform, and for the other one the official build
+from ziglang.org (downloaded with curl), or an unpacked copy you point to
+with `ZIG_WINDOWS=<folder>` / `ZIG_LINUX=<folder>`.
+
+A download contains **no game**: the launcher (`Canopus Protocol.exe`, or
+`canopus-protocol` on Linux, with the icon), the setup tool, the
+recompiler, the runtime as a prebuilt library, and Zig as the C compiler.
+The player puts their dump (and the update and DLC, if they have them) in
+its `games` folder and starts it. The first time, the launcher extracts
+the dump, recompiles it and compiles the result with Zig on the player's
+machine (a few minutes, with a progress window), then starts the game;
+after that it starts at once, and it rebuilds by itself when the files in
+`games` change. `packaging/README-player.txt` is the guide that ships
+with it; `launcher/launcher.cpp` is the launcher.
+
+The runtime library is built with your Zig and the player's machine links
+it with the bundled one's C++ library, which is why the versions must match
+(the script checks).
+
 ## How it works
 
 | Folder | What's in it |
 | --- | --- |
 | `setup/` | `ds2rb_setup`: reads decrypted 3DS containers (NCSD, CIA, NCCH), checks the game version and extracts `code.bin`, the RomFS, the update's code and the DLC contents. |
 | `recomp/` | The static recompiler (Go). It decodes ARMv6K/Thumb/VFPv2, discovers functions (with `functions.csv`, a table of addresses, names and sizes from the reverse engineering, and `hints.txt`) and writes one C function per game function. `functions_v11.csv` and `hints_v11.txt` are the same tables for version 1.1. `recomp/runtime/recomp.h` is the header the generated code is compiled with. |
+| `launcher/`, `packaging/` | The player launcher and the scripts that build the downloads. |
+| `branding/` | The icon and logos (SVG); `runtime/res` has the Windows icon. |
 | `runtime/` | The C++ runtime: a kernel with guest threads, synchronization and timers (`kernel.cpp`), IPC services such as fs, gsp, dsp, apt, hid, cfg, y2r and am (`svc_*.cpp`; am and fs serve the DLC), the PICA200 GPU (`pica*.cpp`), DSP audio mixing, the window and input for Win32 and SDL2, patches for the hand-written ARM the recompiler can't express (coroutines in `patches.cpp`), and the cheat menu (`cheats.cpp`). |
 
 ## Status
 
 The game boots, plays the opening movie with sound, and gets through New
 Game, the prologue and registration, loads saves, and runs version 1.0 or
-1.1 with the DLC. Known gaps: no hardware-accelerated renderer yet (it
-renders in software on all cores), no fragment lighting, and some
+1.1 with the DLC. Known gaps: the game's 3D is drawn on the CPU
+(on all cores), not the graphics card; no fragment lighting, and some
 bottom-screen text (load and difficulty screens) draws garbled.

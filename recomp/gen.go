@@ -4,6 +4,7 @@ import (
 	"bufio"
 	_ "embed"
 	"fmt"
+	"hash/crc32"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -127,6 +128,8 @@ func Generate(p *Program, out string) error {
 		fmt.Fprintf(&t, "    {0x%08X, 0x%08X, d_%08X},\n", f.Start, f.End, a)
 	}
 	t.WriteString("    {0, 0, 0}\n};\n")
+	// The code.bin this was made from: the runtime refuses another one.
+	fmt.Fprintf(&t, "const uint32_t rc_code_crc = 0x%08X;\n", crc32.ChecksumIEEE(p.Im.Data))
 	if err := put("table.c", []byte(t.String())); err != nil {
 		return err
 	}

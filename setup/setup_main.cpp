@@ -183,7 +183,7 @@ bool processUpdate(const fs::path& file, ctr::File& f, const ctr::Container& c, 
     writeFile(dataDir / "exheader.bin", c.main.exheader.data(), c.main.exheader.size());
     std::ofstream(dataDir / "version.txt", std::ios::binary) << known->second;
     std::ofstream(marker, std::ios::binary) << fingerprint(file);
-    std::cout << "  The game will now run as version " << known->second << ". Run 'make recomp' again.\n";
+    std::cout << "  The game will now run as version " << known->second << ".\n";
     return true;
 }
 

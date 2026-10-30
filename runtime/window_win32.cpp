@@ -1,6 +1,7 @@
-// The window on Windows: plain Win32 and GDI, no other libraries. A thread
-// of its own owns the window and its message loop; frames arrive from the
-// VBlank thread through Show.
+// The window on Windows: plain Win32, drawing with OpenGL (vsync: no
+// tearing) or, if that is not available, GDI. A thread of its own owns the
+// window and its message loop; frames arrive from the VBlank thread through
+// Show.
 //
 // Keys: arrows = +Control Pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 // Enter = START, Backspace = SELECT, I/J/K/L = Circle Pad. The left mouse
@@ -13,6 +14,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <GL/gl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -40,6 +42,24 @@ std::atomic<u32> s_buttons{0};
 std::atomic<bool> s_touch{false};
 std::atomic<int> s_touchX{0}, s_touchY{0};
 std::atomic<int> s_circle{0};  // bits: 1 left, 2 right, 4 up, 8 down
+std::atomic<bool> s_newFrame{false};
+
+#ifndef GL_BGRA_EXT
+#define GL_BGRA_EXT 0x80E1
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
+// OpenGL output: the frame as a texture (512x512: OpenGL 1.1 wants powers
+// of two), drawn scaled to the window; SwapBuffers waits for the monitor.
+struct Gl {
+    bool on = false;
+    HDC dc = nullptr;
+    HGLRC rc = nullptr;
+    GLuint tex = 0;
+} s_gl;
+constexpr int TEX = 512;
 
 // Where the picture goes in the client area (scaled, aspect kept).
 RECT Fit(int cw, int ch)
@@ -131,11 +151,101 @@ void Paint(HWND hwnd)
     EndPaint(hwnd, &ps);
 }
 
+bool InitGl(HWND hwnd)
+{
+    const Options& o = g_options;
+    HDC dc = GetDC(hwnd);
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof pfd;
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+    const int format = ChoosePixelFormat(dc, &pfd);
+    HGLRC rc = format && SetPixelFormat(dc, format, &pfd) ? wglCreateContext(dc) : nullptr;
+    if (!rc || !wglMakeCurrent(dc, rc)) {
+        Log(LOG_WARN, "window", "OpenGL is not available (error %lu): drawing with GDI", GetLastError());
+        if (rc) wglDeleteContext(rc);
+        ReleaseDC(hwnd, dc);
+        return false;
+    }
+    const char* renderer = (const char*)glGetString(GL_RENDERER);
+    const char* vendor = (const char*)glGetString(GL_VENDOR);
+    if (!renderer || std::strstr(renderer, "GDI Generic")) {
+        // Windows' own software OpenGL: no graphics driver; GDI does better.
+        Log(LOG_WARN, "window", "no OpenGL driver (only Windows' software one): drawing with GDI");
+        wglMakeCurrent(nullptr, nullptr);
+        wglDeleteContext(rc);
+        ReleaseDC(hwnd, dc);
+        return false;
+    }
+    typedef BOOL(WINAPI * SwapInterval)(int);
+    const auto swap = (SwapInterval)wglGetProcAddress("wglSwapIntervalEXT");
+    const bool vsync = swap && swap(o.vsync ? 1 : 0) && o.vsync;
+    glGenTextures(1, &s_gl.tex);
+    glBindTexture(GL_TEXTURE_2D, s_gl.tex);
+    const GLint filter = o.smooth ? GL_LINEAR : GL_NEAREST;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    std::vector<u32> black(TEX * TEX, 0xFF000000u);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, TEX, TEX, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, black.data());
+    glEnable(GL_TEXTURE_2D);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    s_gl.dc = dc;
+    s_gl.rc = rc;
+    s_gl.on = true;
+    Log(LOG_INFO, "window", "output: OpenGL (%s, %s), vsync %s", renderer, vendor ? vendor : "?", vsync ? "on" : "off");
+    return true;
+}
+
+void DrawGl(HWND hwnd)
+{
+    RECT c;
+    GetClientRect(hwnd, &c);
+    if (c.right <= 0 || c.bottom <= 0) return;
+    if (s_newFrame.exchange(false)) {
+        std::lock_guard<std::mutex> g(s_frameLock);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H, GL_BGRA_EXT, GL_UNSIGNED_BYTE, s_frame.data());
+    }
+    glViewport(0, 0, c.right, c.bottom);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, c.right, c.bottom, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    const RECT r = Fit(c.right, c.bottom);
+    const float u = (float)W / TEX, v = (float)H / TEX;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0);
+    glVertex2i(r.left, r.top);
+    glTexCoord2f(u, 0);
+    glVertex2i(r.right, r.top);
+    glTexCoord2f(u, v);
+    glVertex2i(r.right, r.bottom);
+    glTexCoord2f(0, v);
+    glVertex2i(r.left, r.bottom);
+    glEnd();
+    SwapBuffers(s_gl.dc);  // waits for the monitor's refresh (vsync)
+}
+
 LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_APP:  // a new frame
-        InvalidateRect(hwnd, nullptr, FALSE);
+        if (s_gl.on) {
+            if (s_newFrame) DrawGl(hwnd);  // frames queued while waiting are skipped
+        } else {
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_SIZE:
+        if (s_gl.on) DrawGl(hwnd);
         return 0;
     case WM_APP + 1: {  // a new status line
         std::string t;
@@ -147,7 +257,12 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_PAINT:
-        Paint(hwnd);
+        if (s_gl.on) {
+            ValidateRect(hwnd, nullptr);
+            DrawGl(hwnd);
+        } else {
+            Paint(hwnd);
+        }
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -222,12 +337,17 @@ void Run(std::string title, std::atomic<int>* ready)
 {
     s_title = title;
     HINSTANCE inst = GetModuleHandleW(nullptr);
-    WNDCLASSW wc = {};
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof wc;
+    wc.style = CS_OWNDC;  // OpenGL keeps the window's device context
     wc.lpfnWndProc = Proc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    // The icon from res/canopus.rc (resource 1), large and small.
+    wc.hIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
+    wc.hIconSm = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     wc.lpszClassName = L"ds2rb";
-    RegisterClassW(&wc);
+    RegisterClassExW(&wc);
     RECT r = {0, 0, W * 2, H * 2};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     std::wstring wtitle(title.begin(), title.end());
@@ -235,6 +355,8 @@ void Run(std::string title, std::atomic<int>* ready)
                            r.bottom - r.top, nullptr, nullptr, inst, nullptr);
     *ready = s_hwnd ? 1 : -1;
     if (!s_hwnd) return;
+    if (g_options.output != "gdi" && !InitGl(s_hwnd)) g_options.output = "gdi";
+    if (!s_gl.on) Log(LOG_INFO, "window", "output: GDI (no vsync)");
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
         TranslateMessage(&m);
@@ -267,6 +389,7 @@ void Show(const u32* top, const u32* bottom)
             else std::memset(row + BOTTOM_X, 0, 320 * 4);
         }
     }
+    s_newFrame = true;
     if (s_hwnd) PostMessageW(s_hwnd, WM_APP, 0, 0);
 }
 

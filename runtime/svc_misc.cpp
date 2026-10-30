@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <set>
 
 namespace rt {
 namespace ipc {
@@ -146,13 +147,81 @@ struct Simple : Service {
             r.cmd[2] = 1;
             return;
         }
-        if (name == "ac:u" && r.id() == 0x000D) {  // GetWifiStatus: not connected
-            r.Reply(2, 0);
-            r.cmd[2] = 0;
-            return;
+        if (name == "ac:u" && Ac(r)) return;
+        // Network services the game may try (DLC shop, SpotPass): log each
+        // command once so what the game expects of them shows up.
+        if (name == "nim:aoc" || name == "ac:u" || name == "boss:U") {
+            const u32 key = r.header();
+            if (seen.insert(key).second)
+                Log(LOG_INFO, "ipc", "%s: command %04X (header %08X): success", name.c_str(), r.id(), key);
+        } else {
+            Log(LOG_DEBUG, "ipc", "%s: command %04X: success", name.c_str(), r.id());
         }
-        Log(LOG_DEBUG, "ipc", "%s: command %04X: success", name.c_str(), r.id());
         r.Reply(1, 0);
+    }
+
+    std::set<u32> seen;
+
+    // The events among a request's translated parameters.
+    static std::vector<std::shared_ptr<kernel::Event>> Events(Request& r)
+    {
+        std::vector<std::shared_ptr<kernel::Event>> out;
+        const u32 normal = (r.cmd[0] >> 6) & 0x3F, translate = r.cmd[0] & 0x3F;
+        u32 i = 1 + normal;
+        const u32 end = i + translate;
+        while (i < end) {
+            const u32 d = r.cmd[i++];
+            if ((d & 0xF) == 0 && (d & 0x20)) {  // calling process id
+                ++i;
+            } else if ((d & 0xF) == 0) {  // handles
+                const u32 n = (d >> 26) + 1;
+                for (u32 k = 0; k < n && i < end; ++k, ++i)
+                    if (auto e = kernel::GetAs<kernel::Event>(r.cmd[i], kernel::Type::Event)) out.push_back(e);
+            } else {  // a buffer: one address word
+                ++i;
+            }
+        }
+        return out;
+    }
+
+    // ac:u, as on a console with Wi-Fi switched off: connecting finishes at
+    // once (its event fires) and fails, so the game reports it can't connect
+    // instead of waiting for ever.
+    bool Ac(Request& r)
+    {
+        static constexpr u32 kNotConnected = 0xE0A09D2E;
+        u32* c = r.cmd;
+        switch (r.id()) {
+        case 0x0004:  // ConnectAsync(pid, event, config)
+        case 0x0008:  // CloseAsync(pid, event)
+            Log(LOG_INFO, "ac", "%s: no network", r.id() == 4 ? "ConnectAsync" : "CloseAsync");
+            for (auto& e : Events(r)) {
+                e->signaled = true;
+                kernel::Signal(e.get(), *r.lock);
+            }
+            r.Reply(1, 0);
+            return true;
+        case 0x0005:  // GetConnectResult
+            r.Reply(1, 0, kNotConnected);
+            return true;
+        case 0x0009:  // GetCloseResult
+            r.Reply(1, 0);
+            return true;
+        case 0x000A:  // GetLastErrorCode
+            r.Reply(2, 0);
+            c[2] = 0;
+            return true;
+        case 0x000C:  // GetStatus: not connected
+        case 0x000D:  // GetWifiStatus: not connected
+            r.Reply(2, 0);
+            c[2] = 0;
+            return true;
+        case 0x003E:  // IsConnected: no
+            r.Reply(2, 0);
+            c[2] = 0;
+            return true;
+        }
+        return false;
     }
 };
 
