@@ -18,6 +18,8 @@ DATA ?= data
 BUILD ?= build
 GEN := $(BUILD)/gen
 HOSTCXX ?= c++
+ODIN ?= odin
+RECOMP := $(BUILD)/tools/recomp$(if $(filter Windows_NT,$(OS)),.exe,)
 JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
 SETUP_TOOL := $(BUILD)/tools/ds2rb_setup
@@ -25,7 +27,7 @@ SETUP_TOOL := $(BUILD)/tools/ds2rb_setup
 # recompiler's function table and hints. It is read when recompiling, not
 # when make starts: "make setup recomp" may install the update first.
 VERSION_FILE := $(BUILD)/game-version
-RECOMP_SRC := $(wildcard recomp/*.go recomp/arm/*.go) recomp/go.mod recomp/runtime/recomp.h \
+RECOMP_SRC := $(wildcard recomp/*.odin recomp/arm/*.odin) recomp/runtime/recomp.h \
 	recomp/hints.txt recomp/functions.csv recomp/hints_v11.txt recomp/functions_v11.csv
 TARGETS := linux linux-compat windows windows-zig
 
@@ -51,6 +53,11 @@ $(DATA)/code.bin:
 
 # ---- recompiling ----
 
+# The recompiler (Odin: odin-lang.org, dev-2026-11 or newer).
+$(RECOMP): $(RECOMP_SRC)
+	@mkdir -p $(dir $@)
+	$(ODIN) build recomp -o:speed -out:$@
+
 # Rewritten only when the version in data/ differs from the last recompile,
 # so installing (or removing) the update makes the next build recompile.
 $(VERSION_FILE): FORCE
@@ -58,14 +65,14 @@ $(VERSION_FILE): FORCE
 	@v=$$(cat $(DATA)/version.txt 2>/dev/null || echo 1.0); \
 	if [ "$$(cat $@ 2>/dev/null)" != "$$v" ]; then echo "$$v" > $@; fi
 
-$(GEN)/recomp.h: $(DATA)/code.bin $(VERSION_FILE) $(RECOMP_SRC)
+$(GEN)/recomp.h: $(DATA)/code.bin $(VERSION_FILE) $(RECOMP)
 	rm -rf $(GEN)
 	@mkdir -p $(GEN)
 	@v=$$(cat $(VERSION_FILE)); \
 	if [ "$$v" = 1.1 ]; then funcs=functions_v11.csv; hints=hints_v11.txt; \
 	else funcs=functions.csv; hints=hints.txt; fi; \
 	echo "Recompiling game version $$v ($$funcs, $$hints)"; \
-	cd recomp && go run . -code $(abspath $(DATA)/code.bin) -exheader $(abspath $(DATA)/exheader.bin) \
+	cd recomp && $(abspath $(RECOMP)) -code $(abspath $(DATA)/code.bin) -exheader $(abspath $(DATA)/exheader.bin) \
 		-funcs $$funcs -hints $$hints -out $(abspath $(GEN))
 
 recomp: $(GEN)/recomp.h

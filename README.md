@@ -15,10 +15,6 @@ of your own copy of the game. Everything made from it (the extracted data
 and the generated C code) stays on your machine; don't publish `data/` or
 `build/`.
 
-## License
-
-[![Custom badge](https://git.jester-designs.com/riomoo/gopherbook/media/branch/main/docs/images/svgs/PIL.svg)](LICENSE)
-
 ## What you need
 
 - A **decrypted** dump of the game, as `.3ds`, `.cci`, `.cia` or `.cxi`.
@@ -26,7 +22,8 @@ and the generated C code) stays on your machine; don't publish `data/` or
   the North American release; the setup step checks this.
 - Optional: the **v1.1 update** and the **DLC**, also as decrypted `.cia`
   files dumped from your console.
-- [Go](https://go.dev/dl/) 1.21 or newer (runs the recompiler).
+- [Odin](https://odin-lang.org/docs/install/) dev-2026-11 or newer (builds the
+  recompiler; `odin` on your PATH, or `make ODIN=/path/to/odin`).
 - `make` and a C/C++ compiler for the platform you're building for (below).
 - About 3 GB of free disk space for the extracted game data.
 
@@ -74,17 +71,21 @@ changed. Run `make` on its own to see every target.
 
 ### Linux
 
-Install a compiler, make, Go, and SDL2 (used for the window and sound,
+Install a compiler, make, Odin (see above), and the X11 headers (raylib,
+built in, uses them for the window; X11, OpenGL and the sound system are
 loaded when the game starts):
 
 ```sh
 # Debian / Ubuntu
-sudo apt install build-essential golang libsdl2-2.0-0
+sudo apt install build-essential libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 # Fedora
-sudo dnf install gcc-c++ make golang SDL2
+sudo dnf install gcc-c++ make libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel
 # Arch
-sudo pacman -S base-devel go sdl2
+sudo pacman -S base-devel libx11 libxrandr libxinerama libxcursor libxi
 ```
+
+On Wayland the game runs through XWayland. Headers somewhere else: `make
+X11_DIR=/path/to/X11`.
 
 Then:
 
@@ -106,7 +107,7 @@ The Windows build is made with a cross compiler. Two ways:
 **From WSL (Ubuntu) or any Linux, with MinGW-w64.** Recommended.
 
 ```sh
-sudo apt install build-essential golang g++-mingw-w64-x86-64
+sudo apt install build-essential g++-mingw-w64-x86-64
 make setup recomp windows
 ```
 
@@ -115,7 +116,7 @@ model compiler (`x86_64-w64-mingw32-g++-win32`). The posix one makes the
 game hang, so don't swap it.
 
 **With Zig (works from Windows itself, Linux or macOS).** Install Zig
-([ziglang.org](https://ziglang.org/download/) or `pip install ziglang`), Go,
+([ziglang.org](https://ziglang.org/download/) or `pip install ziglang`), Odin,
 and `make` (for example from [MSYS2](https://www.msys2.org/):
 `pacman -S make`). Then, in the MSYS2 shell:
 
@@ -142,32 +143,41 @@ On Windows, `run.bat` in this folder starts whichever build you made.
 
 ### Controls
 
-| 3DS | Keyboard |
-| --- | --- |
-| +Control Pad | Arrow keys |
-| A / B | X / Z |
-| X / Y | S / A |
-| L / R | Q / W |
-| START / SELECT | Enter / Backspace |
-| Circle Pad | I J K L |
-| Touch screen | Left mouse button on the bottom screen |
+| 3DS | Keyboard | Controller |
+| --- | --- | --- |
+| +Control Pad | Arrow keys | D-pad |
+| A / B | X / Z | A / B |
+| X / Y | S / A | X / Y |
+| L / R | Q / W | LB / RB |
+| START / SELECT | Enter / Backspace | Start (Menu) / Back (View) |
+| Circle Pad | I J K L | Left stick |
+| Touch screen | Left mouse button on the bottom screen | Right stick moves a pointer, right trigger or R3 touches |
+| Cheat menu | F1 | L3 + R3 (both sticks pressed in) |
 
-| Cheat menu | F1 |
+Controllers: any XInput pad (Xbox and most others), DirectInput pads, and
+PlayStation and Switch pads that Windows or Linux recognise; several can be
+plugged in at once. The buttons go by the labels of an Xbox pad, so the
+bottom face button is A. With a Nintendo-style pad (A on the right) add
+`--nintendo-buttons` to use its own labels.
+
+**Steam Input / Steam Deck:** add the game (on Windows, `Canopus
+Protocol.exe` or `ds2rb.exe`; on Linux, `canopus-protocol` or `ds2rb`) to
+Steam with *Games > Add a Non-Steam Game to My Library*. Steam then
+presents your controller (or the Deck's controls) as an Xbox pad, and you
+can remap anything in Steam's controller settings. Use Steam's *Gamepad*
+template, not a keyboard/mouse one.
 
 ### Display options
 
 The picture is drawn with vsync (in step with your monitor's refresh), so
-it doesn't tear. On Windows it goes through OpenGL, or GDI if there is no
-OpenGL driver; on Linux through SDL's accelerated renderer (normally
-OpenGL). Add these after `--data data`, or to the line in `run.bat` /
+it doesn't tear. It goes through OpenGL (2.1 or newer) with raylib. Add these after `--data data`, or to the line in `run.bat` /
 `run.sh`:
 
 | Option | Effect |
 | --- | --- |
 | `--no-vsync` | don't wait for the monitor (may tear; a little less input lag) |
 | `--smooth` | smooth (bilinear) scaling instead of sharp pixels |
-| `--output gdi` | Windows: draw with GDI instead of OpenGL |
-| `--output software` | Linux: SDL's software renderer |
+| `--nintendo-buttons` | controller A/B/X/Y by a Nintendo pad's labels (A on the right) |
 
 `ds2rb.log` says which output is in use (the `window: output:` line).
 The game's 3D is still drawn on the CPU; only the final picture goes
@@ -181,7 +191,9 @@ shows the frame rate and how busy the renderer is.
 Press **F1** in the game to open the cheat menu over the top screen (the
 game pauses its input while it's open). Arrow keys move, Enter chooses,
 Esc goes back, F1 closes it; in lists you can type to search and use
-Page Up / Page Down to jump.
+Page Up / Page Down to jump. With a controller: L3 + R3 opens and closes
+it, the D-pad (or left stick) moves, A chooses, B goes back, Y erases and
+LB / RB jump a page.
 
 | Item | What it does |
 | --- | --- |
@@ -225,7 +237,8 @@ Environment variables used for debugging:
 `make package` builds the downloads for players who don't want to build
 anything: `build/dist/CanopusProtocol-windows-x64.zip` and
 `build/dist/CanopusProtocol-linux-x64.tar.gz` (or `make package-windows`,
-`make package-linux`). It needs Go, Zig (yours, from the PATH or
+`make package-linux`). It needs Odin (`ODIN=/path/to/odin` if it is
+not on the PATH), Zig (yours, from the PATH or
 `ZIG=/path/to/zig`) and zip/tar, on Linux, WSL or MSYS2. The download
 bundles Zig for the player's platform, the same version as yours: your own
 installation for your platform, and for the other one the official build
@@ -252,10 +265,10 @@ it with the bundled one's C++ library, which is why the versions must match
 | Folder | What's in it |
 | --- | --- |
 | `setup/` | `ds2rb_setup`: reads decrypted 3DS containers (NCSD, CIA, NCCH), checks the game version and extracts `code.bin`, the RomFS, the update's code and the DLC contents. |
-| `recomp/` | The static recompiler (Go). It decodes ARMv6K/Thumb/VFPv2, discovers functions (with `functions.csv`, a table of addresses, names and sizes from the reverse engineering, and `hints.txt`) and writes one C function per game function. `functions_v11.csv` and `hints_v11.txt` are the same tables for version 1.1. `recomp/runtime/recomp.h` is the header the generated code is compiled with. |
+| `recomp/` | The static recompiler (Odin; `arm/` is the instruction decoder). It decodes ARMv6K/Thumb/VFPv2, discovers functions (with `functions.csv`, a table of addresses, names and sizes from the reverse engineering, and `hints.txt`) and writes one C function per game function. `functions_v11.csv` and `hints_v11.txt` are the same tables for version 1.1. `recomp/runtime/recomp.h` is the header the generated code is compiled with. |
 | `launcher/`, `packaging/` | The player launcher and the scripts that build the downloads. |
 | `branding/` | The icon and logos (SVG); `runtime/res` has the Windows icon. |
-| `runtime/` | The C++ runtime: a kernel with guest threads, synchronization and timers (`kernel.cpp`), IPC services such as fs, gsp, dsp, apt, hid, cfg, y2r and am (`svc_*.cpp`; am and fs serve the DLC), the PICA200 GPU (`pica*.cpp`), DSP audio mixing, the window and input for Win32 and SDL2, patches for the hand-written ARM the recompiler can't express (coroutines in `patches.cpp`), and the cheat menu (`cheats.cpp`). |
+| `runtime/` | The C++ runtime: a kernel with guest threads, synchronization and timers (`kernel.cpp`), IPC services such as fs, gsp, dsp, apt, hid, cfg, y2r and am (`svc_*.cpp`; am and fs serve the DLC), the PICA200 GPU (`pica*.cpp`), DSP audio mixing, the window, input, controllers and sound through raylib (`window_raylib.cpp`, `audio_raylib.cpp`; raylib itself in `third_party/raylib`), patches for the hand-written ARM the recompiler can't express (coroutines in `patches.cpp`), and the cheat menu (`cheats.cpp`). |
 
 ## Status
 
