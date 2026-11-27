@@ -14,8 +14,7 @@ GETTING STARTED
 
 2. Start Canopus Protocol:
      Windows: double-click "Canopus Protocol.exe"
-     Linux:   run ./canopus-protocol (needs SDL2: for example
-              "sudo apt install libsdl2-2.0-0")
+     Linux:   run ./canopus-protocol
 
    The first time, it reads your game files and builds the game from them.
    That takes a few minutes (it shows its progress). After that, the game
@@ -27,14 +26,29 @@ GETTING STARTED
 
 CONTROLS
 
-  +Control Pad      Arrow keys
-  A / B             X / Z
-  X / Y             S / A
-  L / R             Q / W
-  START / SELECT    Enter / Backspace
-  Circle Pad        I J K L
-  Touch screen      Left mouse button on the bottom screen
-  Cheat menu        F1
+                    Keyboard            Controller
+  +Control Pad      Arrow keys          D-pad
+  A / B             X / Z               A / B
+  X / Y             S / A               X / Y
+  L / R             Q / W               LB / RB
+  START / SELECT    Enter / Backspace   Start / Back
+  Circle Pad        I J K L             Left stick
+  Touch screen      Left mouse button   Right stick moves a pointer;
+                    on the bottom       right trigger or R3 touches
+                    screen
+  Cheat menu        F1                  L3 + R3 (press both sticks in)
+
+The controller buttons go by an Xbox pad's labels (bottom button = A).
+With a Nintendo-style pad add --nintendo-buttons (see OPTIONS) to use its
+own labels.
+
+STEAM INPUT AND STEAM DECK
+
+In Steam: Games > Add a Non-Steam Game to My Library, and pick
+"Canopus Protocol.exe" (Windows) or canopus-protocol (Linux). Steam then
+hands the game your controller (or the Deck's controls) as an Xbox pad,
+and you can remap buttons in Steam's controller settings. Use the
+"Gamepad" controller template.
 
 THE DLC
 
@@ -47,7 +61,7 @@ OPTIONS
 Add these after the program's name (or to a shortcut):
   --no-vsync        don't wait for the monitor (may tear)
   --smooth          smooth scaling instead of sharp pixels
-  --output gdi      Windows: draw with GDI instead of OpenGL
+  --nintendo-buttons  controller A/B/X/Y by a Nintendo pad's labels
   --rebuild         build the game again from your files
 
 FILES IT MAKES

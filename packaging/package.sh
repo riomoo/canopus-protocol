@@ -9,7 +9,8 @@
 # extracted, recompiled and compiled on their machine the first time it
 # starts.
 #
-# Needs: Go, Zig (the one on your PATH, or ZIG=/path/to/zig), zip/tar, and
+# Needs: Odin (dev-2026-11 or newer: the one on your PATH, or ODIN=/path/to/odin),
+# Zig (the one on your PATH, or ZIG=/path/to/zig), zip/tar, and
 # for the Windows package from Linux, curl (or ZIG_WINDOWS, below). Runs on
 # Linux (or WSL / MSYS2 on Windows).
 #
@@ -28,9 +29,14 @@ BUILD=$ROOT/build/package
 DIST=$ROOT/build/dist
 NAME="Canopus Protocol"
 
+# A Zig installed by a package manager can have read-only folders, and cp
+# keeps that: make copies writable so they can be trimmed and deleted again.
+rmtree() { if [ -e "$1" ]; then chmod -R u+w "$1" 2>/dev/null || true; rm -rf "$1"; fi; }
+copytree() { cp -R "$1" "$2" && chmod -R u+w "$2"; }
+
 case "$PLATFORM" in
-windows) TARGET=x86_64-windows-gnu; RT_TARGET=windows-zig; EXE=.exe; GOOS=windows; ZOS=windows; ZEXT=zip ;;
-linux)   TARGET=x86_64-linux-gnu.2.28; RT_TARGET=linux-compat; EXE=; GOOS=linux; ZOS=linux; ZEXT=tar.xz ;;
+windows) TARGET=x86_64-windows-gnu; RT_TARGET=windows-zig; EXE=.exe; OTARGET=windows_amd64; ZOS=windows; ZEXT=zip ;;
+linux)   TARGET=x86_64-linux-gnu.2.28; RT_TARGET=linux-compat; EXE=; OTARGET=linux_amd64; ZOS=linux; ZEXT=tar.xz ;;
 *) echo "usage: package.sh windows|linux"; exit 1 ;;
 esac
 case "$(uname -s)" in
@@ -65,9 +71,9 @@ bundle_zig() {
     fi
     if [ "$PLATFORM" = "$HOST" ]; then
         # Your own installation.
-        rm -rf "$out" && mkdir -p "$out"
+        rmtree "$out" && mkdir -p "$out"
         cp "$(command -v "$ZIG")" "$out/zig$EXE"
-        cp -r "$ZIG_LIB" "$out/lib"
+        copytree "$ZIG_LIB" "$out/lib"
         for l in "$(dirname "$(readlink -f "$(command -v "$ZIG")")")/LICENSE" "$ZIG_LIB/../LICENSE" "$ZIG_LIB/../../share/licenses/zig/LICENSE" /usr/share/licenses/zig/LICENSE /usr/share/doc/zig/copyright; do
             if [ -f "$l" ]; then cp "$l" "$out/LICENSE"; break; fi
         done
@@ -85,7 +91,7 @@ bundle_zig() {
             if curl -fL --retry 2 -o "$BUILD/download/$name.$ZEXT" "$url"; then file=$name; break; fi
         done
         [ -n "$file" ] || { echo "could not download Zig $ZIG_VERSION for $ZOS: download it from ziglang.org, unpack it and set ZIG_WINDOWS (or ZIG_LINUX) to its folder"; exit 1; }
-        rm -rf "$BUILD/unpack" && mkdir -p "$BUILD/unpack"
+        rmtree "$BUILD/unpack" && mkdir -p "$BUILD/unpack"
         if [ "$ZEXT" = zip ]; then unzip -q "$BUILD/download/$file.$ZEXT" -d "$BUILD/unpack"
         else tar -xJf "$BUILD/download/$file.$ZEXT" -C "$BUILD/unpack"; fi
         mv "$BUILD/unpack/$file" "$out"
@@ -96,7 +102,7 @@ bundle_zig
 export ZIG_GLOBAL_CACHE_DIR=$BUILD/zig-cache
 
 STAGE=$BUILD/stage-$PLATFORM/$NAME
-rm -rf "$BUILD/stage-$PLATFORM"
+rmtree "$BUILD/stage-$PLATFORM"
 mkdir -p "$STAGE/tools/runtime" "$STAGE/tools/tables" "$STAGE/games"
 
 echo "== Runtime ($RT_TARGET)"
@@ -112,7 +118,20 @@ echo "== Setup tool"
 "$ZIG" c++ -target $TARGET -std=c++17 -O2 -w -s -o "$STAGE/tools/setup$EXE" "$ROOT/setup/setup_main.cpp" "$ROOT/setup/ctr.cpp" >/dev/null 2>&1
 
 echo "== Recompiler"
-(cd "$ROOT/recomp" && CGO_ENABLED=0 GOOS=$GOOS GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$STAGE/tools/recomp$EXE" .)
+# Odin compiles it to an object file for the player's platform; Zig links
+# it (against glibc 2.28 on Linux, so it runs on older distributions too).
+ODIN=${ODIN:-odin}
+command -v "$ODIN" >/dev/null 2>&1 || { echo "Odin not found: install it (odin-lang.org) or set ODIN=/path/to/odin"; exit 1; }
+rmtree "$BUILD/recomp-$PLATFORM" && mkdir -p "$BUILD/recomp-$PLATFORM"
+"$ODIN" build "$ROOT/recomp" -target:$OTARGET -build-mode:obj -o:speed -out:"$BUILD/recomp-$PLATFORM/recomp.o"
+if [ "$PLATFORM" = windows ]; then
+    echo 'int _fltused = 0;' > "$BUILD/recomp-$PLATFORM/fltused.c"
+    "$ZIG" cc -target $TARGET -municode -s -o "$STAGE/tools/recomp.exe" "$BUILD/recomp-$PLATFORM"/*.o* "$BUILD/recomp-$PLATFORM/fltused.c" -lbcrypt >"$BUILD/recomp-$PLATFORM/link.log" 2>&1 \
+        || { cat "$BUILD/recomp-$PLATFORM/link.log"; exit 1; }
+else
+    "$ZIG" cc -target $TARGET -s -o "$STAGE/tools/recomp" "$BUILD/recomp-$PLATFORM"/*.o -lm >"$BUILD/recomp-$PLATFORM/link.log" 2>&1 \
+        || { cat "$BUILD/recomp-$PLATFORM/link.log"; exit 1; }
+fi
 cp "$ROOT/recomp/functions.csv" "$ROOT/recomp/hints.txt" "$ROOT/recomp/functions_v11.csv" "$ROOT/recomp/hints_v11.txt" "$STAGE/tools/tables/"
 
 echo "== Launcher"
@@ -127,7 +146,7 @@ fi
 echo "== Zig $ZIG_VERSION for the player (only what building for $PLATFORM needs)"
 mkdir -p "$STAGE/tools/zig"
 cp "$ZIG_BUNDLE/zig$EXE" "$STAGE/tools/zig/"
-cp -r "$ZIG_BUNDLE/lib" "$STAGE/tools/zig/lib"
+copytree "$ZIG_BUNDLE/lib" "$STAGE/tools/zig/lib"
 [ -f "$ZIG_BUNDLE/LICENSE" ] && cp "$ZIG_BUNDLE/LICENSE" "$STAGE/tools/zig/LICENSE"
 rm -rf "$STAGE/tools/zig/lib/docs" "$STAGE/tools/zig/lib/build-web" "$STAGE/tools/zig/lib/init" "$STAGE/tools/zig/lib/libtsan"
 for d in musl wasi darwin freebsd netbsd openbsd; do rm -rf "$STAGE/tools/zig/lib/libc/$d"; done
