@@ -245,5 +245,7 @@ input::State PollInput()
     return st;
 }
 
+u64 FrameCount() { return s_frame; }
+
 }  // namespace display
 }  // namespace rt

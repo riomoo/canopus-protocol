@@ -32,6 +32,12 @@
 #include <vector>
 
 namespace rt {
+#ifdef _WIN32
+namespace crash {
+void Install();
+void LogSystem();
+}
+#endif
 
 int g_logLevel = LOG_INFO;
 Exheader g_exheader;
@@ -205,20 +211,6 @@ bool LoadProgram()
     return true;
 }
 
-#ifdef _WIN32
-LONG WINAPI OnWinCrash(EXCEPTION_POINTERS* e)
-{
-    kernel::Thread* t = kernel::Current();
-    const uintptr_t fault = (uintptr_t)e->ExceptionRecord->ExceptionInformation[1], base = (uintptr_t)g_mem;
-    char where[160] = "";
-    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault >= base && fault < base + (1ull << 32))
-        std::snprintf(where, sizeof where, " at guest address %08X", (u32)(fault - base));
-    char who[160] = "";
-    if (t) std::snprintf(who, sizeof who, " (thread %u, in function %08X, lr %08X, sp %08X)", t->id, t->cpu.r[15], t->cpu.r[14], t->cpu.r[13]);
-    Fatal("exception %08lX at host %p%s%s", (unsigned long)e->ExceptionRecord->ExceptionCode, e->ExceptionRecord->ExceptionAddress, where, who);
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-#endif
 
 #ifndef _WIN32
 // DS2RB_PROFILE=1: samples where the process is (host program counter) 1000
@@ -358,7 +350,6 @@ int main(int argc, char** argv)
 {
     bool headless = false;
 #ifdef _WIN32
-    SetUnhandledExceptionFilter(OnWinCrash);
     // Windows sleeps in 15.6 ms steps unless asked for 1 ms: the game's
     // short waits (0.5 ms polls in the movie player) would crawl.
     timeBeginPeriod(1);
@@ -372,7 +363,8 @@ int main(int argc, char** argv)
         else if (a == "--headless") headless = true;
         else if (a == "--no-vsync") window::g_options.vsync = false;
         else if (a == "--smooth") window::g_options.smooth = true;
-        else if (a == "--output" && i + 1 < argc) window::g_options.output = argv[++i];
+        else if (a == "--nintendo-buttons") window::g_options.nintendoButtons = true;
+        else if (a == "--output" && i + 1 < argc) ++i;  // older versions' choice of output: OpenGL is the only one now
     }
 #ifndef _WIN32
     struct sigaction sa = {};
@@ -387,6 +379,10 @@ int main(int argc, char** argv)
     if (std::getenv("DS2RB_STREX_SIMPLE")) rc_excl_cas = 0;
     if (const char* sp = std::getenv("DS2RB_SPEED")) g_speed = std::max(0.1, std::atof(sp));
     if (!std::getenv("DS2RB_NO_LOGFILE")) s_logFile = std::fopen("ds2rb.log", "w");
+#ifdef _WIN32
+    crash::Install();
+    crash::LogSystem();
+#endif
     if (!mem::Init() || !LoadProgram()) return 1;
     InstallPatches();
     if (!headless) audio::Open();

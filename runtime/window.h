@@ -1,6 +1,6 @@
-// The host window: shows the two screens and turns the keyboard and mouse
-// into 3DS input. One implementation per platform (window_win32.cpp); where
-// there is none yet, Open returns false and the game runs without a window.
+// The host window: shows the two screens and turns the keyboard, mouse and
+// controllers into 3DS input (window_raylib.cpp). If no window can be opened,
+// Open returns false and the game runs without one.
 #pragma once
 
 #include "input.h"
@@ -10,15 +10,12 @@
 namespace rt {
 namespace window {
 
-// How the picture reaches the screen (command line: --no-vsync, --smooth,
-// --output). Set before Open.
+// How the picture reaches the screen and how controllers map (command
+// line: --no-vsync, --smooth, --nintendo-buttons). Set before Open.
 struct Options {
-    bool vsync = true;    // wait for the monitor's refresh: no tearing
-    bool smooth = false;  // bilinear scaling instead of sharp pixels
-    // "" picks the best: OpenGL on Windows (GDI if it fails), SDL's
-    // accelerated renderer on Linux. Or "gl", "gdi" (Windows), "software"
-    // (Linux).
-    std::string output;
+    bool vsync = true;             // wait for the monitor's refresh: no tearing
+    bool smooth = false;           // bilinear scaling instead of sharp pixels
+    bool nintendoButtons = false;  // A/B/X/Y by a Nintendo pad's labels (A on the right)
 };
 inline Options g_options;
 

@@ -19,6 +19,8 @@ void OpenWindow(const char* title);
 // Called at every VBlank.
 void Present();
 input::State PollInput();
+// Frames shown so far (VBlanks).
+u64 FrameCount();
 
 }  // namespace display
 }  // namespace rt
