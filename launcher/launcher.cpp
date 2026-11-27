@@ -401,7 +401,7 @@ bool Link(const Paths& p)
     args.insert(args.end(), objs.begin(), objs.end());
     args.push_back(p.runtimeLib);
 #ifdef _WIN32
-    for (const char* a : {"-lopengl32", "-lgdi32", "-luser32", "-lwinmm", "-Wl,--stack,67108864", "-Wl,--subsystem,windows"}) args.push_back(a);
+    for (const char* a : {"-lopengl32", "-lgdi32", "-luser32", "-lshell32", "-lwinmm", "-Wl,--stack,67108864", "-Wl,--subsystem,windows"}) args.push_back(a);
     args.push_back(p.res);
 #else
     for (const char* a : {"-lm", "-lpthread", "-ldl"}) args.push_back(a);
