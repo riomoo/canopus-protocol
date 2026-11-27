@@ -16,7 +16,8 @@ GETTING STARTED
      Windows: double-click "Canopus Protocol.exe"
      Linux:   run ./canopus-protocol
 
-   The first time, it reads your game files and builds the game from them.
+   The first time, it reads your game files and builds the game from them,
+   in its window; then the game opens in the same window.
    That takes a few minutes (it shows its progress). After that, the game
    starts straight away. If you add the update or DLC later, it rebuilds
    by itself the next time you start it.
@@ -37,6 +38,7 @@ CONTROLS
                     on the bottom       right trigger or R3 touches
                     screen
   Cheat menu        F1                  L3 + R3 (press both sticks in)
+  Full screen       F11 or Alt+Enter
 
 The controller buttons go by an Xbox pad's labels (bottom button = A).
 With a Nintendo-style pad add --nintendo-buttons (see OPTIONS) to use its
@@ -62,6 +64,7 @@ Add these after the program's name (or to a shortcut):
   --no-vsync        don't wait for the monitor (may tear)
   --smooth          smooth scaling instead of sharp pixels
   --nintendo-buttons  controller A/B/X/Y by a Nintendo pad's labels
+  --no-backdrop     black around the game screens instead of the backdrop
   --rebuild         build the game again from your files
 
 FILES IT MAKES

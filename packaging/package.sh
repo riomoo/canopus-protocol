@@ -108,7 +108,7 @@ mkdir -p "$STAGE/tools/runtime" "$STAGE/tools/tables" "$STAGE/games"
 echo "== Runtime ($RT_TARGET)"
 mkdir -p "$BUILD/rtgen"
 cp "$ROOT/recomp/runtime/recomp.h" "$BUILD/rtgen/recomp.h"
-make -C "$ROOT/runtime" -j"$(nproc 2>/dev/null || echo 4)" lib TARGET=$RT_TARGET GEN="$BUILD/rtgen" BUILD="$BUILD/rt" ZIG="$ZIG" >/dev/null
+make -C "$ROOT/runtime" -j"$(nproc 2>/dev/null || echo 4)" lib ui TARGET=$RT_TARGET GEN="$BUILD/rtgen" BUILD="$BUILD/rt" ZIG="$ZIG" >/dev/null
 cp "$BUILD/rt/$RT_TARGET/libcanopus_rt.a" "$STAGE/tools/runtime/"
 if [ "$PLATFORM" = windows ]; then
     cp "$BUILD/rt/$RT_TARGET/obj/rt/canopus.res" "$STAGE/tools/runtime/"
@@ -135,11 +135,17 @@ fi
 cp "$ROOT/recomp/functions.csv" "$ROOT/recomp/hints.txt" "$ROOT/recomp/functions_v11.csv" "$ROOT/recomp/hints_v11.txt" "$STAGE/tools/tables/"
 
 echo "== Launcher"
+UI_LIB=$BUILD/rt/$RT_TARGET/libcanopus_ui.a
+LFLAGS="-std=c++17 -O2 -w -s -I$ROOT/runtime/third_party/raylib/src"
 if [ "$PLATFORM" = windows ]; then
     (cd "$ROOT/runtime/res" && "$ZIG" rc /fo "$BUILD/launcher.res" canopus.rc)
-    "$ZIG" c++ -target $TARGET -std=c++17 -O2 -w -s -mwindows -o "$STAGE/$NAME.exe" "$ROOT/launcher/launcher.cpp" "$BUILD/launcher.res" -lshell32 -lgdi32 >/dev/null 2>&1
+    "$ZIG" c++ -target $TARGET $LFLAGS -mwindows -o "$STAGE/$NAME.exe" "$ROOT/launcher/launcher.cpp" "$ROOT/launcher/launcher_ui.cpp" \
+        "$BUILD/launcher.res" "$UI_LIB" -lopengl32 -lgdi32 -luser32 -lshell32 -lwinmm >"$BUILD/launcher.log" 2>&1 \
+        || { grep -v "error_category" "$BUILD/launcher.log" | grep -E "error|undefined" ; exit 1; }
 else
-    "$ZIG" c++ -target $TARGET -std=c++17 -O2 -w -s -o "$STAGE/canopus-protocol" "$ROOT/launcher/launcher.cpp" >/dev/null 2>&1
+    "$ZIG" c++ -target $TARGET $LFLAGS -o "$STAGE/canopus-protocol" "$ROOT/launcher/launcher.cpp" "$ROOT/launcher/launcher_ui.cpp" \
+        "$UI_LIB" -lm -lpthread -ldl >"$BUILD/launcher.log" 2>&1 \
+        || { grep -v "error_category" "$BUILD/launcher.log" | grep -E "error|undefined" ; exit 1; }
     cp "$ROOT/branding/canopus-protocol-icon-256.png" "$STAGE/canopus-protocol.png"
 fi
 
@@ -166,6 +172,9 @@ cp "$ROOT/packaging/README-player.txt" "$STAGE/README.txt"
 cp "$ROOT/packaging/games-README.txt" "$STAGE/games/README.txt"
 mkdir -p "$STAGE/licenses"
 [ -f "$STAGE/tools/zig/LICENSE" ] && cp "$STAGE/tools/zig/LICENSE" "$STAGE/licenses/zig-LICENSE.txt"
+cp "$ROOT/runtime/third_party/raylib/LICENSE" "$STAGE/licenses/raylib-LICENSE.txt"
+cp "$ROOT/runtime/third_party/raylib/LICENSE-glfw.md" "$STAGE/licenses/glfw-LICENSE.txt"
+cp "$ROOT/launcher/res/inter-LICENSE.txt" "$STAGE/licenses/inter-font-LICENSE.txt"
 if [ "$PLATFORM" = windows ]; then
     for f in README.txt games/README.txt; do sed 's/$/\r/' "$STAGE/$f" > "$STAGE/$f.crlf" && mv "$STAGE/$f.crlf" "$STAGE/$f"; done
 fi
