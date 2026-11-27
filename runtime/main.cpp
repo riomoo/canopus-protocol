@@ -8,6 +8,7 @@
 #include "rt.h"
 
 #include <csignal>
+#include <cstdio>
 #ifndef _WIN32
 #include <execinfo.h>
 #include <ucontext.h>
@@ -364,6 +365,12 @@ int main(int argc, char** argv)
         else if (a == "--no-vsync") window::g_options.vsync = false;
         else if (a == "--smooth") window::g_options.smooth = true;
         else if (a == "--nintendo-buttons") window::g_options.nintendoButtons = true;
+        else if (a == "--no-backdrop") window::g_options.backdrop = false;
+        else if (a == "--ready-file" && i + 1 < argc) window::g_options.readyFile = argv[++i];
+        else if (a == "--window" && i + 1 < argc) {
+            int* r = window::g_options.rect;
+            if (std::sscanf(argv[++i], "%d,%d,%d,%d", &r[0], &r[1], &r[2], &r[3]) != 4) r[2] = r[3] = 0;
+        }
         else if (a == "--output" && i + 1 < argc) ++i;  // older versions' choice of output: OpenGL is the only one now
     }
 #ifndef _WIN32
@@ -386,7 +393,7 @@ int main(int argc, char** argv)
     if (!mem::Init() || !LoadProgram()) return 1;
     InstallPatches();
     if (!headless) audio::Open();
-    if (!headless) display::OpenWindow(("Devil Survivor 2 Record Breaker - " + g_exheader.title).c_str());
+    if (!headless) display::OpenWindow("Canopus Protocol");
     ipc::RegisterAll();
     const int code = kernel::RunProcess(g_exheader.textAddr, mem::STACK_TOP, 0x30);
     Log(LOG_INFO, "main", "the game exited (%d)", code);

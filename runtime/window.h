@@ -11,11 +11,15 @@ namespace rt {
 namespace window {
 
 // How the picture reaches the screen and how controllers map (command
-// line: --no-vsync, --smooth, --nintendo-buttons). Set before Open.
+// line: --no-vsync, --smooth, --nintendo-buttons, --no-backdrop). Set
+// before Open.
 struct Options {
     bool vsync = true;             // wait for the monitor's refresh: no tearing
     bool smooth = false;           // bilinear scaling instead of sharp pixels
     bool nintendoButtons = false;  // A/B/X/Y by a Nintendo pad's labels (A on the right)
+    bool backdrop = true;          // the Canopus backdrop around the screens (--no-backdrop: black)
+    int rect[4] = {0, 0, 0, 0};    // --window x,y,w,h: where the launcher's window was
+    std::string readyFile;         // --ready-file: written once the window shows (the launcher then closes)
 };
 inline Options g_options;
 

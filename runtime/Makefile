@@ -60,14 +60,22 @@ RT_FLAGS := -std=c++17 -O2 $(G) -Wall -Wextra -Wno-unused-parameter -ffp-contrac
 RL := third_party/raylib/src
 RL_SRC := rcore rglfw rshapes rtextures raudio
 RL_OBJ := $(patsubst %,$(OUT)/obj/raylib/%.o,$(RL_SRC))
-RL_FORMATS := PNG BMP TGA JPG GIF QOI PEP PSD DDS HDR PIC PNM KTX ASTC PKM PVR WAV OGG MP3 QOA FLAC XM MOD
-RL_FLAGS := -std=gnu99 -O2 $(G) -w -fno-strict-aliasing -DPLATFORM_DESKTOP_GLFW -DGRAPHICS_API_OPENGL_21 \
-	-DSUPPORT_SCREEN_CAPTURE=0 -DSUPPORT_AUTOMATION_EVENTS=0 -DSUPPORT_MODULE_RMODELS=0 -DSUPPORT_MODULE_RTEXT=0 \
+RL_COMMON := -std=gnu99 -O2 $(G) -w -fno-strict-aliasing -DPLATFORM_DESKTOP_GLFW -DGRAPHICS_API_OPENGL_21 \
+	-DSUPPORT_SCREEN_CAPTURE=0 -DSUPPORT_AUTOMATION_EVENTS=0 -DSUPPORT_MODULE_RMODELS=0 \
 	-DSUPPORT_CAMERA_SYSTEM=0 -DSUPPORT_GESTURES_SYSTEM=0 -DSUPPORT_MOUSE_GESTURES=0 -DSUPPORT_COMPRESSION_API=0 \
-	-DSUPPORT_CLIPBOARD_IMAGE=0 $(patsubst %,-DSUPPORT_FILEFORMAT_%=0,$(RL_FORMATS)) -I$(RL) -I$(RL)/external/glfw/include
+	-DSUPPORT_CLIPBOARD_IMAGE=0 -I$(RL) -I$(RL)/external/glfw/include \
+	$(patsubst %,-DSUPPORT_FILEFORMAT_%=0,BMP TGA JPG GIF QOI PEP PSD DDS HDR PIC PNM KTX ASTC PKM PVR WAV OGG MP3 QOA FLAC XM MOD FNT BDF)
+# The game: PNG for the backdrop, no text module.
+RL_FLAGS := $(RL_COMMON) -DSUPPORT_MODULE_RTEXT=0
+# The launcher's window (libcanopus_ui.a): text (TrueType), no sound.
+RLUI_SRC := rcore rglfw rshapes rtextures rtext
+RLUI_OBJ := $(patsubst %,$(OUT)/obj/raylib-ui/%.o,$(RLUI_SRC))
+RLUI_FLAGS := $(RL_COMMON) -DSUPPORT_MODULE_RAUDIO=0
+UI_LIB := $(OUT)/libcanopus_ui.a
 X11_DIR ?= /usr/include/X11
 ifneq ($(filter linux linux-compat,$(TARGET)),)
 RL_FLAGS += -D_GLFW_X11 -isystem $(OUT)/x11inc
+RLUI_FLAGS += -D_GLFW_X11 -isystem $(OUT)/x11inc
 RL_DEPS := $(OUT)/x11inc/X11/Xlib.h
 endif
 
@@ -96,9 +104,19 @@ $(OUT)/obj/rt/%.o: %.cpp *.h $(GEN)/recomp.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(RT_FLAGS) -c $< -o $@
 
-$(OUT)/obj/raylib/%.o: $(RL)/%.c $(RL_DEPS)
+$(OUT)/obj/raylib/%.o: $(RL)/%.c $(RL_DEPS) Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(RL_FLAGS) -c $< -o $@
+
+$(OUT)/obj/raylib-ui/%.o: $(RL)/%.c $(RL_DEPS) Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(RLUI_FLAGS) -c $< -o $@
+
+# raylib for the launcher's window.
+ui: $(UI_LIB)
+$(UI_LIB): $(RLUI_OBJ)
+	@rm -f $@
+	$(AR_CMD) rcs $@ $^
 
 # Only the X11 headers, not the rest of /usr/include (Zig brings its own libc).
 $(OUT)/x11inc/X11/Xlib.h:
@@ -115,6 +133,6 @@ $(LIB): $(RT_OBJ) $(RL_OBJ)
 	rm -f $@
 	$(AR_CMD) rcs $@ $^
 
-.PHONY: clean lib
+.PHONY: clean lib ui
 clean:
 	rm -rf $(OUT)

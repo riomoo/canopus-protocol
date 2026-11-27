@@ -15,6 +15,8 @@
 #include "window.h"
 #include "cheats.h"
 #include "icon_pixels.h"
+#include "res/backdrop_png.h"
+#include "window_geometry.h"
 
 #include "raylib.h"
 
@@ -26,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -168,14 +171,56 @@ Fit FitWindow()
     return {(sw - W * s) / 2, (sh - H * s) / 2, s};
 }
 
+// Draws a backdrop to cover the whole window (cropped, aspect kept).
+void DrawCover(const Texture2D& t, Color tint)
+{
+    if (!IsTextureValid(t)) return;
+    const float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+    const float s = std::max(sw / t.width, sh / t.height);
+    const float w = sw / s, h = sh / s;
+    DrawTexturePro(t, {(t.width - w) / 2, (t.height - h) / 2, w, h}, {0, 0, sw, sh}, {0, 0}, 0, tint);
+}
+
+void DrawFrame(const Texture2D& tex, const Texture2D& logo, const Texture2D& plain, float fade, bool pointer, float ptrX, float ptrY)
+{
+    const Fit f = FitWindow();
+    auto alpha = [](float a) { return (unsigned char)std::lround(std::clamp(a, 0.0f, 1.0f) * 255); };
+    if (fade < 1) DrawCover(logo, WHITE);
+    if (fade > 0) {
+        // The game: the backdrop dimmed behind the screens (or black), the
+        // screens with a soft shadow.
+        if (IsTextureValid(plain)) DrawCover(plain, Color{88, 92, 104, alpha(fade)});
+        else DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, alpha(fade)});
+        // The two screens, each with a soft shadow and a thin blue edge.
+        const float pad = std::max(2.0f, f.scale * 3);
+        const Rectangle src[2] = {{0, 0, 400, 240}, {(float)BOTTOM_X, (float)BOTTOM_Y, 320, 240}};
+        for (const Rectangle& r : src) {
+            const Rectangle d = {f.x + r.x * f.scale, f.y + r.y * f.scale, r.width * f.scale, r.height * f.scale};
+            if (IsTextureValid(plain)) {
+                DrawRectangleRec({d.x - pad, d.y - pad, d.width + 2 * pad, d.height + 2 * pad}, Color{0, 0, 0, alpha(fade * 0.45f)});
+                DrawRectangleLinesEx({d.x - 1, d.y - 1, d.width + 2, d.height + 2}, 1, Color{90, 170, 235, alpha(fade * 0.7f)});
+            }
+            DrawTexturePro(tex, r, d, {0, 0}, 0, Color{255, 255, 255, alpha(fade)});
+        }
+    }
+    if (pointer && fade >= 1) {
+        const float px = f.x + (BOTTOM_X + ptrX + 0.5f) * f.scale, py = f.y + (BOTTOM_Y + ptrY + 0.5f) * f.scale;
+        const float r = std::max(4.0f, 3.5f * f.scale);
+        const Color c = s_touch ? Color{255, 61, 139, 255} : Color{255, 255, 255, 230};
+        DrawCircleLinesV({px, py}, r + 1, Color{0, 0, 0, 200});
+        DrawCircleLinesV({px, py}, r, c);
+        DrawCircleV({px, py}, std::max(1.5f, f.scale * 0.75f), c);
+    }
+}
+
 void Run(std::string title, std::atomic<int>* ready)
 {
     InstallRaylibLog();
     const Options& o = g_options;
-    unsigned flags = FLAG_WINDOW_RESIZABLE;
+    unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIDDEN;  // shown once it has its size, place and picture
     if (o.vsync) flags |= FLAG_VSYNC_HINT;  // frames reach the screen between refreshes: no tearing
     SetConfigFlags(flags);
-    InitWindow(W * 2, H * 2, title.c_str());
+    InitWindow(1280, 720, title.c_str());
     if (!IsWindowReady()) {
         Log(LOG_WARN, "window", "no window: OpenGL 2.1 or newer is needed");
         *ready = -1;
@@ -183,17 +228,13 @@ void Run(std::string title, std::atomic<int>* ready)
     }
     SetExitKey(KEY_NULL);  // Esc is for the cheat menu, not for quitting
     SetTraceLogLevel(LOG_WARNING);
-    // The largest whole zoom (up to 2x) that fits the screen, centred.
+    // Where the launcher's window was (it hands over to this one), else the
+    // default size and place.
     {
-        const int m = GetCurrentMonitor();
-        const int mw = GetMonitorWidth(m), mh = GetMonitorHeight(m);
-        int zoom = 2;
-        while (zoom > 1 && (W * zoom > mw * 9 / 10 || H * zoom > mh * 9 / 10)) --zoom;
-        if (mw > 0 && mh > 0) {
-            SetWindowSize(W * zoom, H * zoom);
-            const Vector2 mp = GetMonitorPosition(m);
-            SetWindowPosition((int)mp.x + (mw - W * zoom) / 2, (int)mp.y + std::max(0, (mh - H * zoom) / 2));
-        }
+        WindowRect r = DefaultWindowRect();
+        if (o.rect[2] > 0 && o.rect[3] > 0) r = {o.rect[0], o.rect[1], o.rect[2], o.rect[3]};
+        SetWindowSize(r.w, r.h);
+        if (r.x != -1 || r.y != -1) SetWindowPosition(r.x, r.y);
     }
     // The window icon (taskbar, title bar, Alt-Tab): RGBA bytes.
     {
@@ -214,6 +255,23 @@ void Run(std::string title, std::atomic<int>* ready)
         return;
     }
     SetTextureFilter(tex, o.smooth ? TEXTURE_FILTER_BILINEAR : TEXTURE_FILTER_POINT);
+    // The backdrops: with the logo while the game starts (the launcher's
+    // picture), without it around the screens once the game runs.
+    auto loadPng = [](const unsigned char* data, int size) {
+        Texture2D t = {};
+        Image img = LoadImageFromMemory(".png", data, size);
+        if (img.data) {
+            t = LoadTextureFromImage(img);
+            UnloadImage(img);
+            if (IsTextureValid(t)) {
+                GenTextureMipmaps(&t);
+                SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
+            }
+        }
+        return t;
+    };
+    const Texture2D logo = loadPng(kBackdropLogoPng, sizeof kBackdropLogoPng);
+    const Texture2D plain = o.backdrop ? loadPng(kBackdropPng, sizeof kBackdropPng) : Texture2D{};
     Log(LOG_INFO, "window", "output: raylib OpenGL, %dx%d, vsync %s, %s scaling", GetScreenWidth(), GetScreenHeight(),
         o.vsync ? "on" : "off", o.smooth ? "smooth" : "sharp");
     *ready = 1;
@@ -227,6 +285,10 @@ void Run(std::string title, std::atomic<int>* ready)
     bool padSeen = false;
     Repeat rUp, rDown, rLeft, rRight;
     double last = GetTime();
+    double fadeStart = -1, shownAt = 0;  // the game's first picture fades in over the starting backdrop
+    float fade = 0;
+    bool shown = false;
+    std::string readyFile = o.readyFile;
     for (;;) {
         if (WindowShouldClose()) {
             Log(LOG_INFO, "window", "closed");
@@ -282,8 +344,9 @@ void Run(std::string title, std::atomic<int>* ready)
             while (GetCharPressed()) {}
             rUp = rDown = rLeft = rRight = Repeat();
             keyButtons = 0;
+            const bool alt = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
             for (const KeyMap& k : kKeys)
-                if (IsKeyDown(k.key)) keyButtons |= k.button;
+                if (IsKeyDown(k.key) && !(alt && k.button == input::START)) keyButtons |= k.button;
             keyCircle = (IsKeyDown(KEY_J) ? 1 : 0) | (IsKeyDown(KEY_L) ? 2 : 0) | (IsKeyDown(KEY_I) ? 4 : 0) | (IsKeyDown(KEY_K) ? 8 : 0);
             s_buttons = keyButtons | pad.buttons;
             // Circle Pad: the keys, else the left stick (radial dead zone).
@@ -342,6 +405,10 @@ void Run(std::string title, std::atomic<int>* ready)
         }
 
         const bool fresh = s_newFrame.exchange(false);
+        if (fresh && fadeStart < 0) fadeStart = now + 0.15;
+        fade = fadeStart < 0 ? 0 : (float)std::clamp((now - fadeStart) / 0.6, 0.0, 1.0);
+        if (IsKeyPressed(KEY_F11) || ((IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) && IsKeyPressed(KEY_ENTER)))
+            ToggleBorderlessWindowed();
         if (fresh) {
             {
                 std::lock_guard<std::mutex> g(s_frameLock);
@@ -353,21 +420,23 @@ void Run(std::string title, std::atomic<int>* ready)
         if (IsWindowMinimized()) {
             PollInputEvents();
             WaitTime(0.02);
-        } else if (o.vsync || fresh || pointer || IsWindowResized()) {
+        } else if (o.vsync || fresh || pointer || IsWindowResized() || fade < 1) {
             // With vsync this waits for the monitor's refresh.
             BeginDrawing();
             ClearBackground(BLACK);
-            const Fit f = FitWindow();
-            DrawTexturePro(tex, {0, 0, (float)W, (float)H}, {f.x, f.y, W * f.scale, H * f.scale}, {0, 0}, 0, WHITE);
-            if (pointer) {
-                const float px = f.x + (BOTTOM_X + ptrX + 0.5f) * f.scale, py = f.y + (BOTTOM_Y + ptrY + 0.5f) * f.scale;
-                const float r = std::max(4.0f, 3.5f * f.scale);
-                const Color c = s_touch ? Color{255, 61, 139, 255} : Color{255, 255, 255, 230};
-                DrawCircleLinesV({px, py}, r + 1, Color{0, 0, 0, 200});
-                DrawCircleLinesV({px, py}, r, c);
-                DrawCircleV({px, py}, std::max(1.5f, f.scale * 0.75f), c);
-            }
+            DrawFrame(tex, logo, plain, fade, pointer, ptrX, ptrY);
             EndDrawing();
+            if (!shown) {
+                // The first picture is in place: show the window, then tell
+                // the launcher, whose window goes away (the same picture, at
+                // the same place).
+                ClearWindowState(FLAG_WINDOW_HIDDEN);
+                shown = true;
+                shownAt = now;
+            } else if (!readyFile.empty() && now - shownAt > 0.1) {
+                std::ofstream(readyFile) << "ready\n";
+                readyFile.clear();
+            }
             if (!o.vsync && !fresh) WaitTime(0.004);
         } else {
             PollInputEvents();
