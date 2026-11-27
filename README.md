@@ -2,6 +2,14 @@
   <img src="branding/canopus-protocol-glitch.gif" alt="Canopus Protocol" width="600">
 </p>
 
+![Guix](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/crystal-gnu-guix.svg)
+![Gimp Gnu Image Manipulation Program](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/gimp.svg)
+![Forgejo](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/forgejo.svg)
+[![PIL](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/license-pil.svg)](LICENSE)
+![Git](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/git.svg)
+![Podman](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/dev-podman.svg)
+![Vim](https://git.jester-designs.com/riomoo/badges/raw/branch/master/docs/images/svgs/vim.svg)
+
 # Canopus Protocol
 
 An unofficial PC port of Devil Survivor 2 Record Breaker: a native Windows and Linux version of *Shin Megami Tensei: Devil Survivor 2
@@ -153,6 +161,7 @@ On Windows, `run.bat` in this folder starts whichever build you made.
 | Circle Pad | I J K L | Left stick |
 | Touch screen | Left mouse button on the bottom screen | Right stick moves a pointer, right trigger or R3 touches |
 | Cheat menu | F1 | L3 + R3 (both sticks pressed in) |
+| Full screen | F11 or Alt+Enter | |
 
 Controllers: any XInput pad (Xbox and most others), DirectInput pads, and
 PlayStation and Switch pads that Windows or Linux recognise; several can be
@@ -178,12 +187,14 @@ it doesn't tear. It goes through OpenGL (2.1 or newer) with raylib. Add these af
 | `--no-vsync` | don't wait for the monitor (may tear; a little less input lag) |
 | `--smooth` | smooth (bilinear) scaling instead of sharp pixels |
 | `--nintendo-buttons` | controller A/B/X/Y by a Nintendo pad's labels (A on the right) |
+| `--no-backdrop` | black around the screens instead of the Canopus backdrop |
 
 `ds2rb.log` says which output is in use (the `window: output:` line).
 The game's 3D is still drawn on the CPU; only the final picture goes
 through the graphics card.
 
-Saves are kept in `data/save/`. The window can be resized. The title bar
+Saves are kept in `data/save/`. The window can be resized; F11 (or
+Alt+Enter) switches to full screen and back. The title bar
 shows the frame rate and how busy the renderer is.
 
 ### Cheat menu
