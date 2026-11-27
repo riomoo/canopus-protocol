@@ -11,7 +11,13 @@
 // The game is built on the player's machine from their own copy: nothing
 // made from it is part of the download.
 //
+// The first time, a window (launcher_ui.cpp) shows the progress over the
+// Canopus backdrop; the game's window then opens at the same size and place
+// with the same picture, and this one closes.
+//
 // Linux: "canopus-protocol --install-desktop" adds a menu entry with the icon.
+#include "launcher_ui.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -58,16 +64,36 @@ constexpr const char* kGameName = "Canopus Protocol";
 fs::path g_root;  // the folder the launcher is in
 std::ofstream g_log;
 
-// ---- output: a window on Windows, the terminal (or zenity) on Linux ----
+// ---- output: the window, and the terminal on Linux ----
 
 std::mutex g_outLock;
 std::function<void(const std::string&, bool)> g_sink;  // line, replaces the last line
+ui::Progress g_progress;
 
+// Lines not indented are stages ("Compiling the game..."), indented ones
+// their details.
 void Say(const std::string& line, bool replace = false)
 {
     std::lock_guard<std::mutex> g(g_outLock);
     if (g_log) g_log << line << "\n" << std::flush;
     if (g_sink) g_sink(line, replace);
+    std::lock_guard<std::mutex> pg(g_progress.lock);
+    auto& lines = g_progress.lines;
+    if (replace && !lines.empty() && lines.back().rfind("  ", 0) == 0) lines.back() = line;
+    else lines.push_back(line);
+    if (line.rfind("  ", 0) == 0) {
+        g_progress.detail = line.substr(line.find_first_not_of(' '));
+    } else if (!line.empty()) {
+        g_progress.stage = line;
+        g_progress.detail.clear();
+        g_progress.fraction = -1;
+    }
+}
+
+void SetFraction(float f)
+{
+    std::lock_guard<std::mutex> g(g_progress.lock);
+    g_progress.fraction = f;
 }
 
 std::string ReadText(const fs::path& p)
@@ -377,8 +403,11 @@ bool Compile(const Paths& p)
             }
             const size_t n = ++done;
             Say("  " + std::to_string(n) + " of " + std::to_string(sources.size()) + " done", true);
+            SetFraction((float)n / sources.size());
         }
     };
+    Say("  0 of " + std::to_string(sources.size()) + " done");
+    SetFraction(0);
     std::vector<std::thread> threads;
     for (unsigned t = 0; t < jobs; ++t) threads.emplace_back(worker);
     for (auto& t : threads) t.join();
@@ -423,6 +452,10 @@ bool Prepare(bool force)
     std::error_code ec;
     if (!fs::exists(p.games, ec)) fs::create_directories(p.games, ec);
     if (!HasGameFiles(p.games) && !fs::exists(p.data / "setup_done.txt", ec)) {
+        {
+            std::lock_guard<std::mutex> g(g_progress.lock);
+            g_progress.needGames = true;
+        }
         Say(std::string("Put your decrypted game dump (.3ds, .cci or .cia) in the games folder:"));
         Say("  " + p.games.u8string());
         Say("Add the update and DLC .cia files there too if you have them, then start " + std::string(kGameName) + " again.");
@@ -430,6 +463,10 @@ bool Prepare(bool force)
     }
     if (HasGameFiles(p.games) && !Setup(p)) return false;
     if (!fs::exists(p.data / "code.bin", ec)) {
+        {
+            std::lock_guard<std::mutex> g(g_progress.lock);
+            g_progress.needGames = true;
+        }
         Say("No game data yet: the games folder needs your game dump (not only the update or DLC).");
         return false;
     }
@@ -450,18 +487,38 @@ bool Prepare(bool force)
     }
     if (!Link(p)) return false;
     WriteText(p.cache / "link.key", k.link);
-    Say("Ready.");
+    Say("Starting the game...");
     return true;
 }
 
-// Starts the game. Windows: as its own process (the launcher then exits);
-// Linux: in place of the launcher.
-bool StartGame(const std::vector<std::string>& extra)
+// The game's process, when the launcher hands its window over to it.
+#ifdef _WIN32
+HANDLE g_child = nullptr;
+#else
+pid_t g_child = 0;
+#endif
+fs::path g_readyFile;
+
+// Starts the game with the player's options. rect: where the launcher's
+// window is (the game's window takes its place), or null. replace: Linux,
+// run it in place of the launcher.
+bool StartGame(const std::vector<std::string>& extra, const int* rect, bool replace)
 {
     const Paths p = MakePaths();
+    std::vector<std::string> args = {"--data", p.data.u8string()};
+    if (rect) {
+        g_readyFile = p.cache / "window-ready";
+        std::error_code ec;
+        fs::remove(g_readyFile, ec);
+        args.insert(args.end(), {"--window", std::to_string(rect[0]) + "," + std::to_string(rect[1]) + "," + std::to_string(rect[2]) + "," +
+                                                 std::to_string(rect[3]),
+                                 "--ready-file", g_readyFile.u8string()});
+    }
+    args.insert(args.end(), extra.begin(), extra.end());
 #ifdef _WIN32
-    std::wstring cmd = Quote(p.game.wstring()) + L" --data " + Quote(p.data.wstring());
-    for (const auto& a : extra) cmd += L" " + Quote(fs::u8path(a).wstring());
+    (void)replace;
+    std::wstring cmd = Quote(p.game.wstring());
+    for (const auto& a : args) cmd += L" " + Quote(fs::u8path(a).wstring());
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
@@ -471,20 +528,101 @@ bool StartGame(const std::vector<std::string>& extra)
         Say("Could not start the game (error " + std::to_string(GetLastError()) + ").");
         return false;
     }
-    CloseHandle(pi.hProcess);
+    g_child = pi.hProcess;
     CloseHandle(pi.hThread);
     return true;
 #else
     if (chdir(g_root.c_str()) != 0) {}
-    std::vector<std::string> strs = {p.game.native(), "--data", p.data.native()};
-    strs.insert(strs.end(), extra.begin(), extra.end());
+    std::vector<std::string> strs = {p.game.native()};
+    strs.insert(strs.end(), args.begin(), args.end());
     std::vector<char*> argv;
     for (auto& s : strs) argv.push_back(s.data());
     argv.push_back(nullptr);
-    execv(argv[0], argv.data());
-    Say(std::string("Could not start the game: ") + std::strerror(errno));
-    return false;
+    if (replace) {
+        execv(argv[0], argv.data());
+        Say(std::string("Could not start the game: ") + std::strerror(errno));
+        return false;
+    }
+    if (posix_spawn(&g_child, argv[0], nullptr, nullptr, argv.data(), environ) != 0) {
+        Say(std::string("Could not start the game: ") + std::strerror(errno));
+        return false;
+    }
+    return true;
 #endif
+}
+
+// The game's window is up (or the game ended): the launcher can go.
+bool GameTookOver()
+{
+    std::error_code ec;
+    if (fs::exists(g_readyFile, ec)) {
+        fs::remove(g_readyFile, ec);
+        return true;
+    }
+#ifdef _WIN32
+    return g_child && WaitForSingleObject(g_child, 0) == WAIT_OBJECT_0;
+#else
+    int status = 0;
+    return g_child > 0 && waitpid(g_child, &status, WNOHANG) == g_child;
+#endif
+}
+
+void OpenGamesFolder()
+{
+    const fs::path dir = MakePaths().games;
+#ifdef _WIN32
+    ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    pid_t pid;
+    std::string d = dir.native();
+    char prog[] = "xdg-open";
+    char* argv[] = {prog, d.data(), nullptr};
+    posix_spawnp(&pid, "xdg-open", nullptr, nullptr, argv, environ);
+#endif
+}
+
+// Everything after reading the command line: start at once when nothing is
+// to build, else build in the window and hand it over to the game.
+int Launch(bool force, const std::vector<std::string>& extra, bool tty)
+{
+    g_log.open(MakePaths().logFile, std::ios::app);
+    if (UpToDate(force)) return StartGame(extra, nullptr, true) ? 0 : 1;
+    if (tty) {
+        g_sink = [](const std::string& line, bool replace) {
+            if (replace) std::cout << "\r" << line << "\033[K" << std::flush;
+            else std::cout << line << "\n";
+        };
+    }
+    Say(std::string(kGameName) + ": unofficial PC port of Devil Survivor 2 Record Breaker.");
+    Say("The game is built from your own copy, on this computer, the first time it starts.");
+    {
+        std::lock_guard<std::mutex> g(g_progress.lock);
+        g_progress.lines.clear();  // the window lists only what follows
+    }
+    if (!ui::Open(kGameName)) {
+        // No display (a terminal session): the terminal shows the progress.
+        const bool ok = Prepare(force);
+        if (!ok) return 1;
+        return StartGame(extra, nullptr, true) ? 0 : 1;
+    }
+    {
+        std::lock_guard<std::mutex> g(g_progress.lock);
+        g_progress.stage = "Getting ready...";
+    }
+    std::thread([force] {
+        const bool ok = Prepare(force);
+        std::lock_guard<std::mutex> g(g_progress.lock);
+        g_progress.state = ok ? ui::Progress::Ready : ui::Progress::Failed;
+        if (!ok) g_progress.stage = g_progress.needGames ? "Your game files go in the games folder" : "Canopus Protocol could not get ready";
+    }).detach();
+    const bool handedOver = ui::Run(
+        g_progress,
+        [&extra](int x, int y, int w, int h) {
+            const int rect[4] = {x, y, w, h};
+            return StartGame(extra, rect, false);
+        },
+        GameTookOver, OpenGamesFolder);
+    std::_Exit(handedOver ? 0 : 1);  // the build thread may still run when the window is closed
 }
 
 #ifndef _WIN32
@@ -512,54 +650,9 @@ int InstallDesktop()
 
 }  // namespace
 
-// ---- Windows: a small window that shows the progress ----
 #ifdef _WIN32
 
-namespace {
-
-HWND g_win = nullptr, g_edit = nullptr;
-std::vector<std::string> g_lines;
-constexpr UINT WM_TEXT = WM_APP + 1, WM_DONE = WM_APP + 2;
-
-std::wstring Widen(const std::string& s)
-{
-    if (s.empty()) return L"";
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
-    return w;
-}
-
-LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp)
-{
-    switch (m) {
-    case WM_SIZE:
-        if (g_edit) MoveWindow(g_edit, 8, 8, LOWORD(lp) - 16, HIWORD(lp) - 16, TRUE);
-        return 0;
-    case WM_TEXT: {
-        std::string all;
-        {
-            std::lock_guard<std::mutex> g(g_outLock);
-            for (const auto& l : g_lines) all += l + "\r\n";
-        }
-        SetWindowTextW(g_edit, Widen(all).c_str());
-        SendMessageW(g_edit, EM_SETSEL, (WPARAM)-1, (LPARAM)-1);
-        SendMessageW(g_edit, EM_SCROLLCARET, 0, 0);
-        return 0;
-    }
-    case WM_DONE:
-        if (wp) DestroyWindow(h);  // ready: the game starts
-        return 0;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProcW(h, m, wp, lp);
-}
-
-}  // namespace
-
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     wchar_t self[MAX_PATH * 4];
     GetModuleFileNameW(nullptr, self, MAX_PATH * 4);
@@ -573,57 +666,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int)
         if (a == "--rebuild") force = true;
         else extra.push_back(a);
     }
-    g_log.open(MakePaths().logFile, std::ios::app);
-
-    // Up to date: start at once, no window.
-    if (UpToDate(force)) return StartGame(extra) ? 0 : 1;
-
-    WNDCLASSEXW wc = {};
-    wc.cbSize = sizeof wc;
-    wc.lpfnWndProc = Proc;
-    wc.hInstance = inst;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.hIcon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
-    wc.hIconSm = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
-    wc.lpszClassName = L"CanopusLauncher";
-    RegisterClassExW(&wc);
-    g_win = CreateWindowExW(0, wc.lpszClassName, L"Canopus Protocol - getting ready", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
-                            CW_USEDEFAULT, 760, 460, nullptr, nullptr, inst, nullptr);
-    g_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 8, 8,
-                             720, 400, g_win, nullptr, inst, nullptr);
-    HFONT font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, FIXED_PITCH, L"Consolas");
-    SendMessageW(g_edit, WM_SETFONT, (WPARAM)font, TRUE);
-    RECT rc;
-    GetClientRect(g_win, &rc);
-    MoveWindow(g_edit, 8, 8, rc.right - 16, rc.bottom - 16, TRUE);
-
-    g_sink = [](const std::string& line, bool replace) {
-        if (replace && !g_lines.empty() && g_lines.back().rfind("  ", 0) == 0) g_lines.back() = line;
-        else g_lines.push_back(line);
-        PostMessageW(g_win, WM_TEXT, 0, 0);
-    };
-    std::atomic<bool> ready{false};
-    std::thread([&] {
-        Say(std::string(kGameName) + ": unofficial PC port of Devil Survivor 2 Record Breaker.");
-        Say("The game is built from your own copy, on this computer, the first time it starts.");
-        Say("");
-        const bool ok = Prepare(force);
-        if (ok) {
-            ready = true;
-        } else {
-            Say("");
-            Say("The details are in canopus-setup.log. Close this window when you are done.");
-        }
-        PostMessageW(g_win, WM_DONE, ok, 0);
-    }).detach();
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    if (ready) return StartGame(extra) ? 0 : 1;
-    return 1;
+    return Launch(force, extra, false);
 }
 
 #else  // Linux
@@ -639,50 +682,7 @@ int main(int argc, char** argv)
         if (a == "--rebuild") force = true;
         else extra.push_back(a);
     }
-    g_log.open(MakePaths().logFile, std::ios::app);
-
-    // Progress: the terminal if there is one; otherwise zenity's progress
-    // window if it is installed (a launch from the applications menu).
-    FILE* zenity = nullptr;
-    const bool tty = isatty(1);
-    if (tty) {
-        g_sink = [](const std::string& line, bool replace) {
-            if (replace) std::cout << "\r" << line << "\033[K" << std::flush;
-            else std::cout << line << "\n";
-        };
-    }
-    auto openZenity = [&] {
-        if (tty || zenity || std::system("command -v zenity >/dev/null 2>&1") != 0) return;
-        zenity = popen("zenity --progress --pulsate --no-cancel --auto-close --title='Canopus Protocol' --width=520 "
-                       "--text='Getting ready...' 2>/dev/null",
-                       "w");
-        if (zenity)
-            g_sink = [&zenity](const std::string& line, bool) {
-                std::string l = line;
-                std::replace(l.begin(), l.end(), '\'', ' ');
-                std::fprintf(zenity, "# %s\n", l.c_str());
-                std::fflush(zenity);
-            };
-    };
-    if (UpToDate(force)) return StartGame(extra) ? 0 : 1;
-    openZenity();
-    if (tty) {
-        Say(std::string(kGameName) + ": unofficial PC port of Devil Survivor 2 Record Breaker.");
-        Say("The game is built from your own copy, on this computer, the first time it starts.");
-        Say("");
-    }
-    const bool ok = Prepare(force);
-    if (zenity) {
-        std::fprintf(zenity, "100\n");
-        pclose(zenity);
-    }
-    if (!ok) {
-        if (!tty && std::system("command -v zenity >/dev/null 2>&1") == 0)
-            std::system("zenity --error --title='Canopus Protocol' --text='Canopus Protocol could not get ready. "
-                        "The details are in canopus-setup.log, next to the program.' 2>/dev/null");
-        return 1;
-    }
-    return StartGame(extra) ? 0 : 1;
+    return Launch(force, extra, isatty(1));
 }
 
 #endif
